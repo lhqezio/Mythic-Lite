@@ -1,0 +1,193 @@
+"""
+Configuration module for Mythic-Lite chatbot system.
+Centralizes all configuration settings and environment variables.
+"""
+
+import os
+from typing import Dict, Any, Optional
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# Temporarily disable dotenv to avoid dependency issues
+# from dotenv import load_dotenv
+# load_dotenv()
+
+
+@dataclass
+class LoggingConfig:
+    """Logging configuration settings."""
+    level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+    format: str = field(default_factory=lambda: os.getenv("LOG_FORMAT", "rich"))
+    file_path: Optional[str] = field(default_factory=lambda: os.getenv("LOG_FILE"))
+    console_output: bool = field(default_factory=lambda: os.getenv("LOG_CONSOLE", "true").lower() == "true")
+
+
+@dataclass
+class LLMConfig:
+    """LLM model configuration settings."""
+    model_repo: str = field(default_factory=lambda: os.getenv("LLM_MODEL_REPO", "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"))
+    model_filename: str = field(default_factory=lambda: os.getenv("LLM_MODEL_FILENAME", "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"))
+    max_tokens: int = field(default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "150")))
+    temperature: float = field(default_factory=lambda: float(os.getenv("LLM_TEMPERATURE", "0.7")))
+    context_window: int = field(default_factory=lambda: int(os.getenv("LLM_CONTEXT_WINDOW", "512")))
+
+
+@dataclass
+class TTSConfig:
+    """Text-to-speech configuration settings."""
+    voice_path: str = field(default_factory=lambda: os.getenv("TTS_VOICE_PATH", "amy-low"))
+    sample_rate: int = field(default_factory=lambda: int(os.getenv("TTS_SAMPLE_RATE", "22050")))
+    channels: int = field(default_factory=lambda: int(os.getenv("TTS_CHANNELS", "1")))
+    audio_format: str = field(default_factory=lambda: os.getenv("TTS_AUDIO_FORMAT", "paInt16"))
+    enable_audio: bool = field(default_factory=lambda: os.getenv("TTS_ENABLE_AUDIO", "true").lower() == "true")
+    
+    # Available Piper voices (these will be automatically mapped to correct paths)
+    AVAILABLE_VOICES = {
+        "amy-low": "en/en_US/amy/low",
+        "amy-medium": "en/en_US/amy/medium", 
+        "amy-high": "en/en_US/amy/high",
+        "jenny-low": "en/en_US/jenny/low",
+        "jenny-medium": "en/en_US/jenny/medium",
+        "jenny-high": "en/en_US/jenny/high",
+        "karen-low": "en/en_US/karen/low",
+        "karen-medium": "en/en_US/karen/medium",
+        "karen-high": "en/en_US/karen/high",
+        "chris-low": "en/en_US/chris/low",
+        "chris-medium": "en/en_US/chris/medium",
+        "chris-high": "en/en_US/chris/high"
+    }
+
+
+@dataclass
+class ASRConfig:
+    """Automatic Speech Recognition configuration settings."""
+    model_name: str = field(default_factory=lambda: os.getenv("ASR_MODEL_NAME", "base"))
+    model_size: str = field(default_factory=lambda: os.getenv("ASR_MODEL_SIZE", "tiny"))
+    language: str = field(default_factory=lambda: os.getenv("ASR_LANGUAGE", "en"))
+    enable_asr: bool = field(default_factory=lambda: os.getenv("ASR_ENABLE", "true").lower() == "true")
+    chunk_length: float = field(default_factory=lambda: float(os.getenv("ASR_CHUNK_LENGTH", "30.0")))
+    sample_rate: int = field(default_factory=lambda: int(os.getenv("ASR_SAMPLE_RATE", "16000")))
+    channels: int = field(default_factory=lambda: int(os.getenv("ASR_CHANNELS", "1")))
+    audio_format: str = field(default_factory=lambda: os.getenv("ASR_AUDIO_FORMAT", "paInt16"))
+
+
+@dataclass
+class SummarizationConfig:
+    """Summarization model configuration settings."""
+    model_repo: str = field(default_factory=lambda: os.getenv("SUMMARIZATION_MODEL_REPO", "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF"))
+    model_filename: str = field(default_factory=lambda: os.getenv("SUMMARIZATION_MODEL_FILENAME", "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"))
+    max_tokens: int = field(default_factory=lambda: int(os.getenv("SUMMARIZATION_MAX_TOKENS", "80")))
+    temperature: float = field(default_factory=lambda: float(os.getenv("SUMMARIZATION_TEMPERATURE", "0.0")))
+
+
+@dataclass
+class ConversationConfig:
+    """Conversation and memory configuration settings."""
+    max_conversation_length: int = field(default_factory=lambda: int(os.getenv("CONVERSATION_MAX_LENGTH", "12")))
+    max_tokens_per_message: int = field(default_factory=lambda: int(os.getenv("CONVERSATION_MAX_TOKENS_PER_MESSAGE", "200")))
+    memory_compression_threshold: int = field(default_factory=lambda: int(os.getenv("CONVERSATION_MEMORY_THRESHOLD", "8")))
+    auto_summarize_interval: int = field(default_factory=lambda: int(os.getenv("CONVERSATION_AUTO_SUMMARIZE", "4")))
+
+
+@dataclass
+class UIConfig:
+    """User interface configuration settings."""
+    enable_colors: bool = field(default_factory=lambda: os.getenv("UI_ENABLE_COLORS", "true").lower() == "true")
+    enable_progress_bars: bool = field(default_factory=lambda: os.getenv("UI_ENABLE_PROGRESS", "true").lower() == "true")
+    enable_animations: bool = field(default_factory=lambda: os.getenv("UI_ENABLE_ANIMATIONS", "true").lower() == "true")
+    theme: str = field(default_factory=lambda: os.getenv("UI_THEME", "default"))
+
+
+@dataclass
+class Config:
+    """Main configuration class that aggregates all configuration sections."""
+    
+    # Environment
+    debug_mode: bool = field(default_factory=lambda: os.getenv("DEBUG_MODE", "false").lower() == "true")
+    environment: str = field(default_factory=lambda: os.getenv("ENVIRONMENT", "development"))
+    
+    # Paths
+    base_path: Path = field(default_factory=lambda: Path(__file__).parent.parent)
+    runtime_path: Path = field(default_factory=lambda: Path(__file__).parent.parent / "runtime")
+    models_path: Path = field(default_factory=lambda: Path(__file__).parent.parent / "runtime" / "models")
+    logs_path: Path = field(default_factory=lambda: Path(__file__).parent.parent / "logs")
+    
+    # Configuration sections
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    tts: TTSConfig = field(default_factory=TTSConfig)
+    asr: ASRConfig = field(default_factory=ASRConfig)
+    summarization: SummarizationConfig = field(default_factory=SummarizationConfig)
+    conversation: ConversationConfig = field(default_factory=ConversationConfig)
+    ui: UIConfig = field(default_factory=UIConfig)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary format."""
+        return {
+            "debug_mode": self.debug_mode,
+            "environment": self.environment,
+            "base_path": str(self.base_path),
+            "runtime_path": str(self.runtime_path),
+            "models_path": str(self.models_path),
+            "logs_path": str(self.logs_path),
+            "logging": {
+                "level": self.logging.level,
+                "format": self.logging.format,
+                "file_path": self.logging.file_path,
+                "console_output": self.logging.console_output
+            },
+            "llm": {
+                "model_repo": self.llm.model_repo,
+                "model_filename": self.llm.model_filename,
+                "max_tokens": self.llm.max_tokens,
+                "temperature": self.llm.temperature,
+                "context_window": self.llm.context_window
+            },
+            "tts": {
+                "voice_path": self.tts.voice_path,
+                "sample_rate": self.tts.sample_rate,
+                "channels": self.tts.channels,
+                "audio_format": self.tts.audio_format,
+                "enable_audio": self.tts.enable_audio
+            },
+            "asr": {
+                "model_name": self.asr.model_name,
+                "model_size": self.asr.model_size,
+                "language": self.asr.language,
+                "enable_asr": self.asr.enable_asr,
+                "chunk_length": self.asr.chunk_length,
+                "sample_rate": self.asr.sample_rate,
+                "channels": self.asr.channels,
+                "audio_format": self.asr.audio_format
+            },
+            "summarization": {
+                "model_repo": self.summarization.model_repo,
+                "model_filename": self.summarization.model_filename,
+                "max_tokens": self.summarization.max_tokens,
+                "temperature": self.summarization.temperature
+            },
+            "conversation": {
+                "max_conversation_length": self.conversation.max_conversation_length,
+                "max_tokens_per_message": self.conversation.max_tokens_per_message,
+                "memory_compression_threshold": self.conversation.memory_compression_threshold,
+                "auto_summarize_interval": self.conversation.auto_summarize_interval
+            },
+            "ui": {
+                "enable_colors": self.ui.enable_colors,
+                "enable_progress_bars": self.ui.enable_progress_bars,
+                "enable_animations": self.ui.enable_animations,
+                "theme": self.ui.theme
+            }
+        }
+
+
+# Global configuration instance
+_config: Optional[Config] = None
+
+
+def get_config() -> Config:
+    """Get the global configuration instance."""
+    global _config
+    if _config is None:
+        _config = Config()
+    return _config
