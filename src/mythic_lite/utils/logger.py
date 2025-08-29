@@ -244,7 +244,7 @@ class MythicLogger:
                 self.clear_line()
                 
                 if status == "listening":
-                    self.console.print("🎤 Listening...", style="bold cyan", end=end)
+                    self.console.print("Listening...", style="bold cyan", end=end)
                 elif status == "thinking":
                     self.console.print("🤔 Thinking...", style="blue", end=end)
                 elif status == "processing":
@@ -254,11 +254,11 @@ class MythicLogger:
                 elif status == "error":
                     self.console.print("❌ Error", style="red", end=end)
                 else:
-                    self.console.print(f"🎤 {status}", end=end)
+                    self.console.print(f"{status}", end=end)
             except:
-                print(f"🎤 {status}", end=end)
+                print(f"{status}", end=end)
         else:
-            print(f"🎤 {status}", end=end)
+            print(f"{status}", end=end)
     
     def clear_line(self):
         """Clear the current line for clean updates."""

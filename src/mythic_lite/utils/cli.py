@@ -1,5 +1,6 @@
 """
 Command-line interface for Mythic-Lite chatbot system.
+
 Provides a clean, professional CLI with clear commands and logical organization.
 """
 
@@ -70,7 +71,7 @@ def cli(ctx, debug: bool, no_colors: bool, version: bool):
                 console.print("Starting voice conversation...", style="cyan")
                 
                 # Start the actual voice interface
-                orchestrator.run_asr_only()
+                orchestrator.run_voice_mode()
                 
             else:
                 console.print("Failed to initialize Mythic system", style="bold red")

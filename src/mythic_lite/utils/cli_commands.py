@@ -1,5 +1,6 @@
 """
 CLI command implementations for Mythic-Lite chatbot system.
+
 Separated from main CLI structure for better organization and maintainability.
 """
 
@@ -93,7 +94,7 @@ def voice(ctx, auto_start: bool, debug: bool):
             console.print("Starting voice conversation...", style="cyan")
             
             # Start the actual voice interface
-            orchestrator.run_asr_only()
+            orchestrator.run_voice_mode()
         else:
             console.print("Failed to initialize system", style="bold red")
             ctx.exit(1)
@@ -109,10 +110,13 @@ def voice(ctx, auto_start: bool, debug: bool):
 
 
 @click.command()
+@click.option('--force', is_flag=True, help='Force reinitialization')
 @click.option('--debug', is_flag=True, help='Enable debug mode')
 @click.pass_context
-def init(ctx, debug: bool):
+def init(ctx, force: bool, debug: bool):
     """Initialize the Mythic system."""
+    logger = ctx.obj['logger']
+    
     try:
         console.print("Initializing Mythic System", style="bold cyan")
         
@@ -128,20 +132,14 @@ def init(ctx, debug: bool):
         orchestrator = create_orchestrator(debug_config)
         
         if initialize_system(orchestrator):
-            # Show status
+            console.print("System initialized successfully", style="bold green")
             show_system_status(orchestrator)
-            
-            # Ask if user wants to start chat
-            from .common import confirm_action
-            if confirm_action("Would you like to start a chat now? (y/n): "):
-                console.print("Starting chat...", style="green")
-                orchestrator.run_chatbot()
         else:
             console.print("Failed to initialize system", style="bold red")
             ctx.exit(1)
-                
+        
     except Exception as e:
-        console.print(f"Failed to initialize system: {e}", style="red")
+        console.print(f"Initialization failed: {e}", style="red")
         ctx.exit(1)
     finally:
         if 'orchestrator' in locals():
@@ -149,185 +147,137 @@ def init(ctx, debug: bool):
 
 
 @click.command()
-@click.option('--voices', is_flag=True, help='Show available TTS voices')
-@click.option('--system', is_flag=True, help='Show system information')
-@click.option('--quick-start', is_flag=True, help='Show quick start guide')
-@click.option('--troubleshooting', is_flag=True, help='Show troubleshooting guide')
+@click.option('--show', is_flag=True, help='Show current configuration')
+@click.option('--edit', is_flag=True, help='Edit configuration')
+@click.option('--reset', is_flag=True, help='Reset to default configuration')
 @click.pass_context
-def config(ctx, voices: bool, system: bool, quick_start: bool, troubleshooting: bool):
-    """Show current configuration and system information."""
+def config(ctx, show: bool, edit: bool, reset: bool):
+    """Manage system configuration."""
     logger = ctx.obj['logger']
     
     try:
-        from .config_manager import get_config_manager
-        config_manager = get_config_manager()
-        
-        if voices:
-            config_manager.show_available_voices()
-        elif system:
-            config_manager.show_system_info()
-        elif quick_start:
-            config_manager.show_quick_start()
-        elif troubleshooting:
-            config_manager.show_troubleshooting()
+        if show:
+            console.print("Configuration management not yet implemented", style="yellow")
+        elif edit:
+            console.print("Configuration editing not yet implemented", style="yellow")
+        elif reset:
+            console.print("Configuration reset not yet implemented", style="yellow")
         else:
-            # Show main configuration
-            config_manager.show_configuration()
-            
-            # Ask if user wants to start chat
-            from .common import confirm_action
-            if confirm_action("Would you like to start a chat now? (y/n): "):
-                console.print("Starting chat...", style="green")
-                orchestrator = create_orchestrator(None)
-                if initialize_system(orchestrator):
-                    orchestrator.run_chatbot()
-                orchestrator.cleanup()
+            console.print("Use --show, --edit, or --reset to manage configuration", style="cyan")
         
     except Exception as e:
-        console.print(f"Failed to show configuration: {e}", style="red")
+        console.print(f"Configuration operation failed: {e}", style="red")
         ctx.exit(1)
 
 
 @click.command()
-@click.option('--debug', is_flag=True, help='Enable debug mode')
 @click.pass_context
-def status(ctx, debug: bool):
+def status(ctx):
     """Show system status."""
+    logger = ctx.obj['logger']
+    
     try:
         console.print("System Status", style="bold cyan")
         
-        if debug:
-            console.print("Debug mode enabled - verbose logging active", style="bold yellow")
+        # Create orchestrator
+        orchestrator = create_orchestrator()
         
-        # Create orchestrator for status display
-        debug_config = None
-        if debug:
-            from .cli_helpers import create_debug_config
-            debug_config = create_debug_config()
-        
-        orchestrator = create_orchestrator(debug_config)
+        # Show status
         show_system_status(orchestrator)
         
-        # Ask if user wants to start chat
-        from .common import confirm_action
-        if confirm_action("Would you like to start a chat now? (y/n): "):
-            console.print("Starting chat...", style="green")
-            if initialize_system(orchestrator):
-                orchestrator.run_chatbot()
-        
-        # Cleanup
+    except Exception as e:
+        console.print(f"Failed to get system status: {e}", style="red")
+        ctx.exit(1)
+    finally:
         if 'orchestrator' in locals():
             orchestrator.cleanup()
-        
-    except Exception as e:
-        console.print(f"Failed to show status: {e}", style="red")
-        ctx.exit(1)
 
 
 @click.command()
-@click.option('--debug', is_flag=True, help='Enable debug mode')
+@click.option('--full', is_flag=True, help='Run full benchmark suite')
+@click.option('--quick', is_flag=True, help='Run quick benchmark')
 @click.pass_context
-def benchmark(ctx, debug: bool):
-    """Run comprehensive system benchmark."""
+def benchmark(ctx, full: bool, quick: bool):
+    """Run system benchmarks."""
+    logger = ctx.obj['logger']
+    
     try:
-        console.print("MYTHIC-LITE BENCHMARK MODE", style="bold blue")
-        console.print("=" * 80, style="bold blue")
+        console.print("Running system benchmark...", style="bold cyan")
         
-        if debug:
-            console.print("Debug mode enabled - verbose logging active", style="bold yellow")
+        # Create orchestrator
+        orchestrator = create_orchestrator()
         
-        # Create orchestrator for benchmark
-        debug_config = None
-        if debug:
-            from .cli_helpers import create_debug_config
-            debug_config = create_debug_config()
-        
-        orchestrator = create_orchestrator(debug_config)
-        
-        # Run the comprehensive benchmark
-        orchestrator._run_benchmark_mode()
-        
-        console.print("\nBenchmark completed successfully!", style="bold green")
-        
-        # Ask if user wants to start chat
-        from .common import confirm_action
-        if confirm_action("Would you like to start a chat now? (y/n): "):
-            console.print("Starting chat...", style="green")
-            if initialize_system(orchestrator):
-                orchestrator.run_chatbot()
-        
-        # Cleanup
-        if 'orchestrator' in locals():
-            orchestrator.cleanup()
+        # Initialize system
+        if initialize_system(orchestrator):
+            # Run benchmark
+            results = orchestrator.run_benchmark()
+            
+            if results:
+                console.print("Benchmark completed successfully", style="bold green")
+                console.print(f"Overall score: {results.get('overall_score', 0)}/100", style="cyan")
+            else:
+                console.print("Benchmark failed", style="bold red")
+        else:
+            console.print("Failed to initialize system for benchmark", style="bold red")
+            ctx.exit(1)
         
     except Exception as e:
         console.print(f"Benchmark failed: {e}", style="red")
         ctx.exit(1)
+    finally:
+        if 'orchestrator' in locals():
+            orchestrator.cleanup()
 
 
 @click.command()
 @click.pass_context
 def help(ctx):
-    """Show detailed help information."""
-    from .cli_helpers import print_banner, print_help_table
+    """Show help information."""
+    logger = ctx.obj['logger']
     
-    print_banner()
-    print_help_table()
+    help_text = """
+Mythic-Lite AI Chatbot System
+
+Available Commands:
+  chat      - Start text-based chat
+  voice     - Start voice conversation
+  init      - Initialize system
+  config    - Manage configuration
+  status    - Show system status
+  benchmark - Run system benchmarks
+  help      - Show this help
+
+For more information about a command, use:
+  mythic <command> --help
+    """
     
-    console.print("\nDetailed Information:", style="bold cyan")
-    console.print("• Text Chat: Use mythic chat for keyboard conversations")
-    console.print("• Voice Chat: Use mythic voice for voice conversations")
-    console.print("• System Status: Use mythic status to check system health")
-    console.print("• System Benchmark: Use mythic benchmark for comprehensive analysis")
-    console.print("• Initialization: Use mythic init to set up the system")
-    
-    console.print("\nTips:", style="yellow")
-    console.print("• Start with mythic init if this is your first time")
-    console.print("• Use mythic status to verify all systems are working")
-    console.print("• Use mythic benchmark for detailed performance analysis")
-    console.print("• For voice conversations, ensure your microphone is working")
-    console.print("• Just run mythic without arguments to run setup then start voice mode!")
-    console.print("• The default behavior is: Setup → Voice Mode (hands-free operation)")
+    console.print(Panel(help_text, title="Help", box=ROUNDED))
 
 
 @click.command()
-@click.option('--debug', is_flag=True, help='Enable debug mode')
+@click.option('--text', default="Hello, this is a TTS test.", help='Text to synthesize')
 @click.pass_context
-def test_tts(ctx, debug: bool):
+def test_tts(ctx, text: str):
     """Test the TTS system."""
+    logger = ctx.obj['logger']
+    
     try:
-        console.print("Testing TTS system...", style="yellow")
+        console.print(f"Testing TTS with text: {text}", style="bold cyan")
         
-        if debug:
-            console.print("Debug mode enabled - verbose logging active", style="bold yellow")
+        # Create orchestrator
+        orchestrator = create_orchestrator()
         
-        # Create orchestrator with debug config if enabled
-        debug_config = None
-        if debug:
-            from .cli_helpers import create_debug_config
-            debug_config = create_debug_config()
-        
-        orchestrator = create_orchestrator(debug_config)
-        
+        # Initialize system
         if initialize_system(orchestrator):
-            if orchestrator.tts_worker.initialize():
-                if orchestrator.tts_worker.is_tts_enabled():
-                    test_text = "This is a test of the text-to-speech system."
-                    audio_data = orchestrator.tts_worker.text_to_speech_stream(test_text)
-                    
-                    if audio_data:
-                        console.print("TTS test successful!", style="green")
-                        console.print("Playing test audio...", style="cyan")
-                        orchestrator.tts_worker.play_audio_stream(audio_data)
-                    else:
-                        console.print("TTS test failed - no audio generated", style="red")
-                else:
-                    console.print("TTS is disabled due to errors", style="yellow")
+            # Test TTS
+            if orchestrator.tts_worker.speak(text):
+                console.print("TTS test successful", style="bold green")
             else:
-                console.print("TTS system failed to initialize", style="red")
+                console.print("TTS test failed", style="bold red")
         else:
-            console.print("Failed to initialize system", style="bold red")
-            
+            console.print("Failed to initialize system for TTS test", style="bold red")
+            ctx.exit(1)
+        
     except Exception as e:
         console.print(f"TTS test failed: {e}", style="red")
         ctx.exit(1)

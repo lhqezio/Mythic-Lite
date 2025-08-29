@@ -1,191 +1,266 @@
 """
-Configuration management module for Mythic-Lite chatbot system.
-Provides a clean interface for managing and displaying configuration settings.
+Configuration Manager for Mythic-Lite chatbot system.
+
+Provides a clean interface for managing system configuration,
+including loading, saving, and validating settings.
 """
 
 import os
+import json
 from pathlib import Path
 from typing import Dict, Any, Optional
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.box import ROUNDED
-from rich.text import Text
+from dataclasses import asdict
 
-from ..core.config import get_config
-
-console = Console()
+from ..core.config import get_config, Config
+from .logger import get_logger
 
 
 class ConfigManager:
-    """Manages configuration display and interaction."""
+    """Manages system configuration and settings."""
     
-    def __init__(self):
+    def __init__(self, config_path: Optional[str] = None):
+        self.logger = get_logger("config-manager")
+        self.config_path = config_path or self._get_default_config_path()
         self.config = get_config()
-    
-    def show_configuration(self, show_details: bool = False):
-        """Display current configuration in a clean, organized format."""
-        console.print("Current Configuration", style="bold cyan")
         
-        # Group configuration by category
-        config_groups = {
-            "System": {
-                "Debug Mode": self.config.debug_mode,
-                "Environment": "development"
-            },
-            "Language Models": {
-                "LLM Model": f"{self.config.llm.model_repo}/{self.config.llm.model_filename}",
-                "Max Tokens": self.config.llm.max_tokens,
-                "Temperature": self.config.llm.temperature,
-                "Context Window": self.config.llm.context_window
-            },
-            "Audio & Speech": {
-                "TTS Voice": self.config.tts.voice_path,
-                "TTS Sample Rate": f"{self.config.tts.sample_rate} Hz",
-                "ASR Model": f"{self.config.asr.model_name}-{self.config.asr.model_size}",
-                "ASR Language": self.config.asr.language,
-                "ASR Enabled": self.config.asr.enable_asr
-            },
-            "Memory & Conversation": {
-                "Max Conversation Length": self.config.conversation.max_conversation_length,
-                "Max Tokens Per Message": self.config.conversation.max_tokens_per_message,
-                "Memory Compression Threshold": self.config.conversation.memory_compression_threshold,
-                "Auto Summarize Interval": self.config.conversation.auto_summarize_interval
-            },
-            "Logging": {
-                "Log Level": self.config.logging.level,
-                "Log Format": self.config.logging.format,
-                "Console Output": self.config.logging.console_output
-            }
+    def _get_default_config_path(self) -> str:
+        """Get the default configuration file path."""
+        config_dir = Path.home() / ".mythic-lite"
+        config_dir.mkdir(exist_ok=True)
+        return str(config_dir / "config.json")
+    
+    def load_config(self) -> Config:
+        """Load configuration from file."""
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r') as f:
+                    config_data = json.load(f)
+                
+                # Update config with loaded data
+                self._update_config_from_dict(config_data)
+                self.logger.info(f"Configuration loaded from {self.config_path}")
+            else:
+                self.logger.info("No configuration file found, using defaults")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to load configuration: {e}")
+            
+        return self.config
+    
+    def save_config(self) -> bool:
+        """Save current configuration to file."""
+        try:
+            # Convert config to dictionary
+            config_dict = asdict(self.config)
+            
+            # Ensure config directory exists
+            config_dir = Path(self.config_path).parent
+            config_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save to file
+            with open(self.config_path, 'w') as f:
+                json.dump(config_dict, f, indent=2, default=str)
+            
+            self.logger.info(f"Configuration saved to {self.config_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save configuration: {e}")
+            return False
+    
+    def _update_config_from_dict(self, config_data: Dict[str, Any]):
+        """Update configuration from dictionary data."""
+        try:
+            # Update logging config
+            if 'logging' in config_data:
+                for key, value in config_data['logging'].items():
+                    if hasattr(self.config.logging, key):
+                        setattr(self.config.logging, key, value)
+            
+            # Update LLM config
+            if 'llm' in config_data:
+                for key, value in config_data['llm'].items():
+                    if hasattr(self.config.llm, key):
+                        setattr(self.config.llm, key, value)
+            
+            # Update TTS config
+            if 'tts' in config_data:
+                for key, value in config_data['tts'].items():
+                    if hasattr(self.config.tts, key):
+                        setattr(self.config.tts, key, value)
+            
+            # Update ASR config
+            if 'asr' in config_data:
+                for key, value in config_data['asr'].items():
+                    if hasattr(self.config.asr, key):
+                        setattr(self.config.asr, key, value)
+            
+            # Update memory config
+            if 'memory' in config_data:
+                for key, value in config_data['memory'].items():
+                    if hasattr(self.config.memory, key):
+                        setattr(self.config.memory, key, value)
+            
+            # Update conversation config
+            if 'conversation' in config_data:
+                for key, value in config_data['conversation'].items():
+                    if hasattr(self.config.conversation, key):
+                        setattr(self.config.conversation, key, value)
+            
+            # Update system config
+            if 'system' in config_data:
+                for key, value in config_data['system'].items():
+                    if hasattr(self.config.system, key):
+                        setattr(self.config.system, key, value)
+                        
+        except Exception as e:
+            self.logger.error(f"Failed to update configuration: {e}")
+    
+    def get_config_value(self, section: str, key: str) -> Any:
+        """Get a specific configuration value."""
+        try:
+            section_obj = getattr(self.config, section, None)
+            if section_obj:
+                return getattr(section_obj, key, None)
+            return None
+        except Exception as e:
+            self.logger.error(f"Failed to get config value {section}.{key}: {e}")
+            return None
+    
+    def set_config_value(self, section: str, key: str, value: Any) -> bool:
+        """Set a specific configuration value."""
+        try:
+            section_obj = getattr(self.config, section, None)
+            if section_obj and hasattr(section_obj, key):
+                setattr(section_obj, key, value)
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to set config value {section}.{key}: {e}")
+            return False
+    
+    def validate_config(self) -> Dict[str, Any]:
+        """Validate the current configuration."""
+        validation_results = {
+            'valid': True,
+            'errors': [],
+            'warnings': []
         }
         
-        # Display configuration in organized tables
-        for group_name, settings in config_groups.items():
-            self._display_config_group(group_name, settings, show_details)
-            console.print()  # Add spacing between groups
-    
-    def _display_config_group(self, group_name: str, settings: Dict[str, Any], show_details: bool):
-        """Display a configuration group."""
-        table = Table(
-            title=group_name,
-            show_header=True,
-            header_style="bold magenta",
-            box=ROUNDED,
-            border_style="cyan"
-        )
-        table.add_column("Setting", style="cyan bold", width=30)
-        table.add_column("Value", style="white")
-        
-        for key, value in settings.items():
-            # Color-code values based on type and status
-            if isinstance(value, bool):
-                value_style = "green" if value else "red"
-            elif isinstance(value, str) and any(status in str(value).lower() for status in ["enabled", "success", "true"]):
-                value_style = "green"
-            elif isinstance(value, str) and any(status in str(value).lower() for status in ["disabled", "error", "false"]):
-                value_style = "red"
-            else:
-                value_style = "white"
+        try:
+            # Validate LLM config
+            if not self.config.llm.model_repo:
+                validation_results['errors'].append("LLM model repository not specified")
+                validation_results['valid'] = False
             
-            table.add_row(key, Text(str(value), style=value_style))
-        
-        console.print(table)
-    
-    def show_available_voices(self):
-        """Display available TTS voices."""
-        console.print("Available TTS Voices", style="bold cyan")
-        
-        table = Table(
-            show_header=True,
-            header_style="bold magenta",
-            box=ROUNDED,
-            border_style="cyan"
-        )
-        table.add_column("Voice ID", style="cyan bold", width=20)
-        table.add_column("Description", style="white")
-        table.add_column("Quality", style="white")
-        
-        voices = self.config.tts.AVAILABLE_VOICES
-        for voice_id, path in voices.items():
-            # Extract quality from voice ID
-            quality = voice_id.split('-')[-1] if '-' in voice_id else "standard"
-            description = f"Voice from {path}"
+            if self.config.llm.max_tokens <= 0:
+                validation_results['errors'].append("LLM max tokens must be positive")
+                validation_results['valid'] = False
             
-            table.add_row(voice_id, description, quality)
+            # Validate TTS config
+            if not self.config.tts.voice_path:
+                validation_results['warnings'].append("TTS voice path not specified")
+            
+            # Validate ASR config
+            if self.config.asr.enable_asr and not self.config.asr.model_name:
+                validation_results['warnings'].append("ASR enabled but model name not specified")
+            
+            # Validate memory config
+            if self.config.memory.cache_size <= 0:
+                validation_results['errors'].append("Memory cache size must be positive")
+                validation_results['valid'] = False
+            
+        except Exception as e:
+            validation_results['errors'].append(f"Configuration validation failed: {e}")
+            validation_results['valid'] = False
         
-        console.print(table)
+        return validation_results
     
-    def show_system_info(self):
-        """Display system information."""
-        console.print("System Information", style="bold cyan")
-        
-        info_panel = Panel(
-            Text("Mythic-Lite AI Chatbot\n", style="bold magenta") +
-            Text("Version: 1.0.0\n", style="cyan") +
-            Text("Environment: Development\n", style="white") +
-            Text("Architecture: Local Processing\n", style="white") +
-            Text("Privacy: Complete (No external API calls)", style="green"),
-            title="System Overview",
-            border_style="magenta",
-            box=ROUNDED
-        )
-        
-        console.print(info_panel)
+    def reset_to_defaults(self) -> bool:
+        """Reset configuration to default values."""
+        try:
+            # Create new default config
+            self.config = get_config()
+            
+            # Save default config
+            return self.save_config()
+            
+        except Exception as e:
+            self.logger.error(f"Failed to reset configuration: {e}")
+            return False
     
-    def show_quick_start(self):
-        """Display quick start guide."""
-        console.print("Quick Start Guide", style="bold cyan")
-        
-        steps = [
-            ("1. Initialize", "mythic init", "Set up the system"),
-            ("2. Check Status", "mythic status", "Verify all systems"),
-            ("3. Start Chat", "mythic chat", "Begin conversation"),
-            ("4. Voice Mode", "mythic voice", "Voice conversation"),
-            ("5. Benchmark", "mythic benchmark", "Test performance")
-        ]
-        
-        table = Table(
-            show_header=True,
-            header_style="bold magenta",
-            box=ROUNDED,
-            border_style="cyan"
-        )
-        table.add_column("Step", style="cyan bold", width=15)
-        table.add_column("Command", style="white", width=20)
-        table.add_column("Description", style="white")
-        
-        for step, command, description in steps:
-            table.add_row(step, command, description)
-        
-        console.print(table)
+    def export_config(self, export_path: str) -> bool:
+        """Export configuration to a file."""
+        try:
+            config_dict = asdict(self.config)
+            
+            with open(export_path, 'w') as f:
+                json.dump(config_dict, f, indent=2, default=str)
+            
+            self.logger.info(f"Configuration exported to {export_path}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to export configuration: {e}")
+            return False
     
-    def show_troubleshooting(self):
-        """Display troubleshooting information."""
-        console.print("Troubleshooting Guide", style="bold cyan")
-        
-        issues = [
-            ("Audio Issues", "Check microphone permissions and audio drivers"),
-            ("Model Loading", "Ensure models are downloaded and accessible"),
-            ("Performance", "Use 'mythic benchmark' to identify bottlenecks"),
-            ("Memory Issues", "Check available RAM and disk space"),
-            ("Dependencies", "Verify all required packages are installed")
-        ]
-        
-        table = Table(
-            show_header=True,
-            header_style="bold magenta",
-            box=ROUNDED,
-            border_style="cyan"
-        )
-        table.add_column("Issue", style="cyan bold", width=20)
-        table.add_column("Solution", style="white")
-        
-        for issue, solution in issues:
-            table.add_row(issue, solution)
-        
-        console.print(table)
+    def import_config(self, import_path: str) -> bool:
+        """Import configuration from a file."""
+        try:
+            with open(import_path, 'r') as f:
+                config_data = json.load(f)
+            
+            # Update config with imported data
+            self._update_config_from_dict(config_data)
+            
+            # Save imported config
+            return self.save_config()
+            
+        except Exception as e:
+            self.logger.error(f"Failed to import configuration: {e}")
+            return False
+    
+    def get_config_summary(self) -> Dict[str, Any]:
+        """Get a summary of the current configuration."""
+        try:
+            return {
+                'logging': {
+                    'level': self.config.logging.level,
+                    'format': self.config.logging.format
+                },
+                'llm': {
+                    'model_repo': self.config.llm.model_repo,
+                    'max_tokens': self.config.llm.max_tokens,
+                    'temperature': self.config.llm.temperature
+                },
+                'tts': {
+                    'voice_path': self.config.tts.voice_path,
+                    'sample_rate': self.config.tts.sample_rate,
+                    'enabled': self.config.tts.enable_audio
+                },
+                'asr': {
+                    'model_name': self.config.asr.model_name,
+                    'enabled': self.config.asr.enable_asr
+                },
+                'memory': {
+                    'cache_size': self.config.memory.cache_size,
+                    'max_tokens': self.config.memory.max_tokens
+                },
+                'conversation': {
+                    'max_length': self.config.conversation.max_conversation_length,
+                    'auto_summarize': self.config.conversation.auto_summarize_interval
+                },
+                'system': {
+                    'debug_mode': self.config.system.debug_mode,
+                    'base_path': str(self.config.system.base_path)
+                }
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get config summary: {e}")
+            return {}
 
 
-def get_config_manager() -> ConfigManager:
+def get_config_manager(config_path: Optional[str] = None) -> ConfigManager:
     """Get a configuration manager instance."""
-    return ConfigManager()
+    return ConfigManager(config_path)
