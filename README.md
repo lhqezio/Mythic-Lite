@@ -135,8 +135,24 @@ python -m mythic_lite.utils.cli config
 
 ```bash
 # Run character system demo
-python examples/character_demo.py
+python examples/02_character_system.py
+
+# Run simple demo
+python demo.py
 ```
+
+### All Examples
+
+```bash
+# Run all examples
+python examples/01_basic_usage.py      # Basic usage
+python examples/02_character_system.py # Character system
+python examples/03_llm_abstraction.py  # LLM abstraction
+python examples/04_memory_system.py    # Memory system
+python examples/05_performance_monitoring.py # Performance monitoring
+```
+
+See the [examples/README.md](examples/README.md) for detailed information about each example.
 
 ## ⚙️ Configuration
 
