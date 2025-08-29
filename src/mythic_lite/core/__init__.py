@@ -1,36 +1,22 @@
 """
 Core module for Mythic-Lite chatbot system.
 
-This module contains the main orchestrator and configuration classes
-that coordinate all system components.
+Provides the main configuration, orchestration, and LLM abstraction layers.
 """
 
+from .config import get_config, Config
 from .chatbot_orchestrator import ChatbotOrchestrator
-from .config import (
-    get_config,
-    LoggingConfig,
-    LLMConfig,
-    TTSConfig,
-    ASRConfig,
-    MemoryConfig,
-    ConversationConfig,
-    SystemConfig,
-    Config
-)
-from .conversation_worker import ConversationWorker
-from .model_manager import ModelManager
+from .llm import BaseLLM, LLMConfig, ModelType, ChatMessage, LLMResponse
+from .llm.factory import get_llm_factory
 
 __all__ = [
-    'ChatbotOrchestrator',
-    'ConversationWorker',
-    'ModelManager',
     'get_config',
-    'LoggingConfig',
+    'Config', 
+    'ChatbotOrchestrator',
+    'BaseLLM',
     'LLMConfig',
-    'TTSConfig',
-    'ASRConfig',
-    'MemoryConfig',
-    'ConversationConfig',
-    'SystemConfig',
-    'Config'
+    'ModelType',
+    'ChatMessage',
+    'LLMResponse',
+    'get_llm_factory'
 ]

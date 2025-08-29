@@ -1,7 +1,7 @@
 """
 Main orchestrator module for Mythic-Lite chatbot system.
 
-Coordinates all workers and manages the main chatbot interface.
+Coordinates all workers and manages the main chatbot interface using the LLM abstraction layer.
 """
 
 import time
@@ -10,7 +10,6 @@ import os
 from datetime import datetime
 from typing import Optional, Any, Dict, List
 
-from .conversation_worker import ConversationWorker
 from .config import get_config
 from ..utils.logger import get_logger
 from ..utils.windows_input import safe_input, safe_choice
@@ -29,14 +28,12 @@ class ChatbotOrchestrator:
         self.memory_worker = MemoryWorker(self.config)
         self.tts_worker = TTSWorker(self.config)
         self.asr_worker = ASRWorker(self.config)
-        self.conversation_worker = ConversationWorker(self.config)
         
         # Set LLM worker reference in memory worker
         self.memory_worker.set_llm_worker(self.llm_worker)
         
         # Debug mode from configuration
         self.debug_mode = self.config.debug_mode
-        self.conversation_worker.debug_mode = self.debug_mode
         
         # Performance tracking
         self.start_time = time.time()
@@ -45,6 +42,10 @@ class ChatbotOrchestrator:
         
         # Track initialization status
         self._initialized = False
+        
+        # Conversation state
+        self.conversation_history = []
+        self.current_context = {}
         
         self.logger.info("ChatbotOrchestrator created (not yet initialized)")
     
@@ -100,13 +101,7 @@ class ChatbotOrchestrator:
             else:
                 self.logger.info("ASR disabled in configuration")
             
-            # Initialize conversation worker
-            self.logger.debug("Initializing conversation worker...")
-            if not self.conversation_worker.initialize():
-                self.logger.warning("Conversation worker initialization failed")
-            else:
-                self.logger.debug("Conversation worker initialized successfully")
-            
+            # Mark as initialized
             self._initialized = True
             self.logger.success("All workers initialized successfully!")
             return True
@@ -115,256 +110,231 @@ class ChatbotOrchestrator:
             self.logger.error(f"Failed to initialize workers: {e}")
             return False
     
-    def _handle_speech_input(self, transcription: str):
-        """Handle speech input from ASR worker."""
-        try:
-            self.logger.info(f"Speech input received: {transcription}")
-            
-            # Process the transcription through the conversation system
-            response = self.conversation_worker.process_user_input(transcription)
-            
-            if response:
-                # Speak the response
-                self.tts_worker.speak(response)
-                
-                # Update conversation tracking
-                self.total_conversations += 1
-                
-        except Exception as e:
-            self.logger.error(f"Error processing speech input: {e}")
-    
-    def _handle_partial_speech(self, partial: str):
-        """Handle partial speech input from ASR worker."""
-        # For now, just log partial results at debug level
-        if self.debug_mode:
-            self.logger.debug(f"Partial speech: {partial}")
-    
-    def run_chatbot(self):
-        """Run the chatbot in text mode."""
+    def process_user_input(self, user_input: str, use_audio: bool = False) -> str:
+        """Process user input and generate a response."""
         if not self._initialized:
-            if not self.initialize_workers():
-                self.logger.error("Failed to initialize workers")
-                return
-        
-        self.logger.info("Starting text-based chatbot...")
+            return "System not initialized. Please wait..."
         
         try:
-            while True:
-                # Get user input
-                user_input = input("You: ").strip()
-                
-                if user_input.lower() in ['quit', 'exit', 'bye']:
-                    self.logger.info("User requested to exit")
-                    break
-                
-                if not user_input:
-                    continue
-                
-                # Process input
-                response = self.conversation_worker.process_user_input(user_input)
-                
-                if response:
-                    print(f"Mythic: {response}")
-                    
-                    # Update conversation tracking
-                    self.total_conversations += 1
-                    
-        except KeyboardInterrupt:
-            self.logger.info("Chatbot interrupted by user")
-        except Exception as e:
-            self.logger.error(f"Error in chatbot: {e}")
-    
-    def run_asr_only(self):
-        """Run only the ASR system for voice input."""
-        if not self._initialized:
-            if not self.initialize_workers():
-                self.logger.error("Failed to initialize workers")
-                return
-        
-        if not self.asr_worker.is_recording_active():
-            self.logger.info("Starting ASR-only mode...")
+            # Add user input to conversation history
+            self.conversation_history.append({
+                'role': 'user',
+                'content': user_input,
+                'timestamp': time.time()
+            })
             
-            # Start recording
-            if self.asr_worker.start_recording():
-                self.logger.info("ASR recording started. Speak to interact...")
-                
+            # Recall relevant memories
+            relevant_memories = self.memory_worker.recall_relevant_memory(user_input)
+            
+            # Build context with memories
+            context = self._build_context(user_input, relevant_memories)
+            
+            # Generate response using LLM abstraction layer
+            response = self.llm_worker.generate_chat_response(
+                messages=self.conversation_history,
+                max_tokens=self.config.llm.max_tokens,
+                temperature=self.config.llm.temperature
+            )
+            
+            if not response:
+                response = "I apologize, but I'm having trouble generating a response right now."
+            
+            # Add AI response to conversation history
+            self.conversation_history.append({
+                'role': 'assistant',
+                'content': response,
+                'timestamp': time.time()
+            })
+            
+            # Store in memory
+            self.memory_worker.store_conversation_memory(user_input, response, context)
+            
+            # Update conversation count
+            self.total_conversations += 1
+            
+            # Generate audio if requested
+            if use_audio and self.tts_worker.is_available():
                 try:
-                    # Keep running until interrupted
-                    while self.asr_worker.is_recording_active():
-                        time.sleep(0.1)
-                        
-                except KeyboardInterrupt:
-                    self.logger.info("ASR mode interrupted by user")
-                finally:
-                    self.asr_worker.stop_recording()
-            else:
-                self.logger.error("Failed to start ASR recording")
+                    self.tts_worker.synthesize_speech(response)
+                except Exception as e:
+                    self.logger.warning(f"TTS failed: {e}")
+            
+            return response
+            
+        except Exception as e:
+            self.logger.error(f"Failed to process user input: {e}")
+            return f"I apologize, but I encountered an error: {str(e)}"
     
-    def run_voice_mode(self):
-        """Run the chatbot in full voice mode."""
+    def process_user_input_stream(self, user_input: str, use_audio: bool = False):
+        """Process user input with streaming response."""
         if not self._initialized:
-            if not self.initialize_workers():
-                self.logger.error("Failed to initialize workers")
-                return
-        
-        self.logger.info("Starting voice conversation mode...")
+            yield "System not initialized. Please wait..."
+            return
         
         try:
-            # Start ASR
-            if not self.asr_worker.start_recording():
-                self.logger.error("Failed to start ASR")
-                return
+            # Add user input to conversation history
+            self.conversation_history.append({
+                'role': 'user',
+                'content': user_input,
+                'timestamp': time.time()
+            })
             
-            self.logger.info("Voice mode active. Speak to interact...")
+            # Recall relevant memories
+            relevant_memories = self.memory_worker.recall_relevant_memory(user_input)
             
-            # Keep running until interrupted
-            while self.asr_worker.is_recording_active():
-                time.sleep(0.1)
-                
-        except KeyboardInterrupt:
-            self.logger.info("Voice mode interrupted by user")
-        finally:
-            self.asr_worker.stop_recording()
+            # Build context with memories
+            context = self._build_context(user_input, relevant_memories)
+            
+            # Generate streaming response using LLM abstraction layer
+            accumulated_response = ""
+            
+            for token, full_response in self.llm_worker.generate_chat_response_stream(
+                messages=self.conversation_history,
+                max_tokens=self.config.llm.max_tokens,
+                temperature=self.config.llm.temperature
+            ):
+                accumulated_response = full_response
+                yield token
+            
+            # Add AI response to conversation history
+            self.conversation_history.append({
+                'role': 'assistant',
+                'content': accumulated_response,
+                'timestamp': time.time()
+            })
+            
+            # Store in memory
+            self.memory_worker.store_conversation_memory(user_input, accumulated_response, context)
+            
+            # Update conversation count
+            self.total_conversations += 1
+            
+            # Generate audio if requested
+            if use_audio and self.tts_worker.is_available():
+                try:
+                    self.tts_worker.synthesize_speech(accumulated_response)
+                except Exception as e:
+                    self.logger.warning(f"TTS failed: {e}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to process user input stream: {e}")
+            yield f"I apologize, but I encountered an error: {str(e)}"
     
-    def run_benchmark(self) -> Dict[str, Any]:
-        """Run system benchmark tests."""
-        if not self._initialized:
-            if not self.initialize_workers():
-                self.logger.error("Failed to initialize workers")
-                return {}
-        
-        self.logger.info("Starting system benchmark...")
-        
-        benchmark_results = {
-            'timestamp': datetime.now().isoformat(),
-            'llm_performance': {},
-            'memory_performance': {},
-            'tts_performance': {},
-            'asr_performance': {},
-            'overall_score': 0.0
+    def _build_context(self, user_input: str, relevant_memories: List[Dict]) -> Dict[str, Any]:
+        """Build context for the current conversation."""
+        context = {
+            'user_input': user_input,
+            'timestamp': time.time(),
+            'conversation_count': self.total_conversations,
+            'relevant_memories': relevant_memories
         }
         
+        # Add system context
+        if hasattr(self.config, 'system'):
+            context['system'] = {
+                'character': getattr(self.config.system, 'character', 'Mythic'),
+                'personality': getattr(self.config.system, 'personality', '19th century mercenary'),
+                'context': getattr(self.config.system, 'context', '')
+            }
+        
+        return context
+    
+    def _handle_speech_input(self, transcription: str):
+        """Handle speech input from ASR."""
+        self.logger.info(f"Speech input: {transcription}")
+        # Process speech input (could be implemented based on your needs)
+    
+    def _handle_partial_speech(self, partial: str):
+        """Handle partial speech input from ASR."""
+        self.logger.debug(f"Partial speech: {partial}")
+        # Handle partial speech (could be implemented based on your needs)
+    
+    def get_system_status(self) -> Dict[str, Any]:
+        """Get the current status of all system components."""
+        return {
+            'initialized': self._initialized,
+            'llm_worker': self.llm_worker.get_status(),
+            'memory_worker': self.memory_worker.get_status(),
+            'tts_worker': self.tts_worker.get_status(),
+            'asr_worker': self.asr_worker.get_status(),
+            'total_conversations': self.total_conversations,
+            'uptime_hours': (time.time() - self.start_time) / 3600,
+            'conversation_history_length': len(self.conversation_history)
+        }
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """Get performance statistics."""
+        stats = {
+            'total_conversations': self.total_conversations,
+            'uptime_hours': (time.time() - self.start_time) / 3600,
+            'conversations_per_hour': (
+                self.total_conversations / ((time.time() - self.start_time) / 3600)
+                if (time.time() - self.start_time) > 0 else 0
+            )
+        }
+        
+        # Add worker-specific stats
+        if self.llm_worker:
+            stats['llm_stats'] = self.llm_worker.get_performance_stats()
+        
+        if self.memory_worker:
+            stats['memory_stats'] = self.memory_worker.get_memory_stats()
+        
+        return stats
+    
+    def run_benchmark(self) -> Dict[str, Any]:
+        """Run a benchmark test of the system."""
+        if not self._initialized:
+            return {'error': 'System not initialized'}
+        
+        self.logger.info("Running system benchmark...")
+        start_time = time.time()
+        
         try:
-            # LLM benchmark
-            self.logger.info("Running LLM benchmark...")
-            llm_start = time.time()
-            test_response = self.llm_worker.generate_response("Hello, how are you?")
-            llm_time = time.time() - llm_start
+            # Test basic response generation
+            test_input = "Hello, how are you today?"
+            response = self.process_user_input(test_input)
             
-            benchmark_results['llm_performance'] = {
-                'response_time': llm_time,
-                'response_length': len(test_response) if test_response else 0,
-                'status': 'success' if test_response else 'failed'
+            benchmark_time = time.time() - start_time
+            
+            self.benchmark_results = {
+                'test_input': test_input,
+                'response': response,
+                'response_time': benchmark_time,
+                'success': bool(response and len(response) > 0),
+                'timestamp': datetime.now().isoformat()
             }
             
-            # Memory benchmark
-            self.logger.info("Running memory benchmark...")
-            memory_start = time.time()
-            memory_status = self.memory_worker.get_status()
-            memory_time = time.time() - memory_start
-            
-            benchmark_results['memory_performance'] = {
-                'initialization_time': memory_time,
-                'status': 'success' if memory_status.get('initialized', False) else 'failed'
-            }
-            
-            # TTS benchmark
-            self.logger.info("Running TTS benchmark...")
-            tts_start = time.time()
-            tts_status = self.tts_worker.get_status()
-            tts_time = time.time() - tts_start
-            
-            benchmark_results['tts_performance'] = {
-                'status_check_time': tts_time,
-                'status': 'success' if tts_status.get('worker_initialized', False) else 'failed'
-            }
-            
-            # ASR benchmark
-            self.logger.info("Running ASR benchmark...")
-            asr_start = time.time()
-            asr_status = self.asr_worker.get_status()
-            asr_time = time.time() - asr_start
-            
-            benchmark_results['asr_performance'] = {
-                'status_check_time': asr_time,
-                'status': 'success' if asr_status.get('worker_initialized', False) else 'failed'
-            }
-            
-            # Calculate overall score
-            scores = []
-            if benchmark_results['llm_performance']['status'] == 'success':
-                scores.append(25.0)
-            if benchmark_results['memory_performance']['status'] == 'success':
-                scores.append(25.0)
-            if benchmark_results['tts_performance']['status'] == 'success':
-                scores.append(25.0)
-            if benchmark_results['asr_performance']['status'] == 'success':
-                scores.append(25.0)
-            
-            benchmark_results['overall_score'] = sum(scores)
-            
-            self.logger.success(f"Benchmark completed. Overall score: {benchmark_results['overall_score']}/100")
+            self.logger.success(f"Benchmark completed in {benchmark_time:.2f}s")
+            return self.benchmark_results
             
         except Exception as e:
             self.logger.error(f"Benchmark failed: {e}")
-        
-        self.benchmark_results = benchmark_results
-        return benchmark_results
-    
-    def get_system_status(self) -> Dict[str, Any]:
-        """Get comprehensive system status."""
-        if not self._initialized:
-            return {'status': 'not_initialized'}
-        
-        status = {
-            'status': 'running',
-            'uptime': time.time() - self.start_time,
-            'total_conversations': self.total_conversations,
-            'workers': {
-                'llm': self.llm_worker.get_status() if hasattr(self.llm_worker, 'get_status') else {},
-                'memory': self.memory_worker.get_status() if hasattr(self.memory_worker, 'get_status') else {},
-                'tts': self.tts_worker.get_status() if hasattr(self.tts_worker, 'get_status') else {},
-                'asr': self.asr_worker.get_status() if hasattr(self.asr_worker, 'get_status') else {},
-                'conversation': self.conversation_worker.get_status() if hasattr(self.conversation_worker, 'get_status') else {}
-            },
-            'configuration': {
-                'debug_mode': self.debug_mode,
-                'asr_enabled': self.config.asr.enable_asr,
-                'tts_enabled': self.config.tts.enable_audio
-            }
-        }
-        
-        return status
+            return {'error': str(e)}
     
     def cleanup(self):
         """Cleanup all resources."""
         self.logger.info("Cleaning up orchestrator resources...")
         
         try:
-            # Cleanup workers
-            if hasattr(self.tts_worker, 'cleanup'):
-                self.tts_worker.cleanup()
-            if hasattr(self.asr_worker, 'cleanup'):
-                self.asr_worker.cleanup()
-            if hasattr(self.llm_worker, 'cleanup'):
+            if self.llm_worker:
                 self.llm_worker.cleanup()
-            if hasattr(self.memory_worker, 'cleanup'):
+            
+            if self.memory_worker:
                 self.memory_worker.cleanup()
-            if hasattr(self.conversation_worker, 'cleanup'):
-                self.conversation_worker.cleanup()
+            
+            if self.tts_worker:
+                self.tts_worker.cleanup()
+            
+            if self.asr_worker:
+                self.asr_worker.cleanup()
             
             self._initialized = False
-            self.logger.info("Orchestrator cleanup completed")
+            self.logger.success("Orchestrator cleanup completed")
             
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
     
-    def __enter__(self):
-        """Context manager entry."""
-        if not self._initialized:
-            self.initialize_workers()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.cleanup() 
+    def is_available(self) -> bool:
+        """Check if the orchestrator is available for use."""
+        return self._initialized and self.llm_worker.is_available() 
