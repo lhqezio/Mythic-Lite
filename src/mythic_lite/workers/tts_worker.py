@@ -17,6 +17,12 @@ try:
     import pyaudio
     import numpy as np
     from piper import PiperVoice
+    # Try to import scipy for audio processing
+    try:
+        from scipy import signal
+        SCIPY_AVAILABLE = True
+    except ImportError:
+        SCIPY_AVAILABLE = False
     AUDIO_AVAILABLE = True
 except ImportError:
     AUDIO_AVAILABLE = False
@@ -42,6 +48,7 @@ except ImportError:
     
     pyaudio = MockPyAudio()
     np = None
+    SCIPY_AVAILABLE = False
 
 from ..utils.logger import get_logger
 from ..core.config import TTSConfig
@@ -55,8 +62,8 @@ class TTSWorker:
             # Mock config for testing
             self.config = type('MockConfig', (), {
                 'tts': type('MockTTSConfig', (), {
-                    'voice_path': 'amy-low',
-                    'sample_rate': 22050,
+                                    'voice_path': 'ljspeech-high',
+                'sample_rate': 22050,
                     'channels': 1,
                     'audio_format': 'paInt16',
                     'enable_audio': True,
@@ -331,6 +338,10 @@ class TTSWorker:
                 self.logger.debug("Audio result is bytes, using directly")
                 audio_data = audio_result
             
+            # Apply pitch and speed adjustments if configured
+            if self.config.tts.pitch != 0.0 or self.config.tts.speed != 1.0:
+                audio_data = self._adjust_audio_pitch_and_speed(audio_data)
+            
             # Update performance metrics
             generation_time = time.time() - start_time
             self._update_performance_metrics(len(audio_data), generation_time)
@@ -370,6 +381,45 @@ class TTSWorker:
             return ""
         
         return clean_text
+    
+    def _adjust_audio_pitch_and_speed(self, audio_data: bytes) -> bytes:
+        """Adjust audio pitch and speed using numpy/scipy."""
+        if not SCIPY_AVAILABLE or not AUDIO_AVAILABLE:
+            self.logger.debug("Scipy not available, skipping audio adjustment")
+            return audio_data
+        
+        try:
+            # Convert bytes to numpy array
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            
+            # Apply speed adjustment (length_scale)
+            if self.config.tts.speed != 1.0:
+                # Resample to change speed
+                new_length = int(len(audio_array) / self.config.tts.speed)
+                audio_array = signal.resample(audio_array, new_length).astype(np.int16)
+                self.logger.debug(f"Applied speed adjustment: {self.config.tts.speed}x")
+            
+            # Apply pitch adjustment
+            if self.config.tts.pitch != 0.0:
+                # Pitch shifting using phase vocoder
+                # Convert to float for processing
+                audio_float = audio_array.astype(np.float32) / 32767.0
+                
+                # Apply pitch shift
+                pitch_factor = 2 ** (self.config.tts.pitch / 12.0)  # Convert semitones to factor
+                audio_shifted = signal.resample(audio_float, int(len(audio_float) * pitch_factor))
+                
+                # Resample back to original length to maintain duration
+                audio_array = signal.resample(audio_shifted, len(audio_array)).astype(np.int16)
+                self.logger.debug(f"Applied pitch adjustment: {self.config.tts.pitch} semitones")
+            
+            # Convert back to bytes
+            return audio_array.tobytes()
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to adjust audio pitch/speed: {e}")
+            self.logger.debug(f"Audio adjustment error details: {e}", exc_info=True)
+            return audio_data
     
     def start_audio_player(self):
         """Start the background audio player thread."""

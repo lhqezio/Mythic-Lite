@@ -55,16 +55,17 @@ class LLMWorker:
             if not model_path:
                 raise Exception("Failed to download LLM model")
             
-            # Initialize model with configuration
-            # For local GGUF files, use Llama() directly instead of from_pretrained()
-            # model_path already includes the filename, so use it directly
+            # Initialize model with configuration using from_pretrained
             if not model_path.exists():
                 raise Exception(f"Model file not found: {model_path}")
             
-            self.llm = Llama(
-                model_path=str(model_path),
+            self.llm = Llama.from_pretrained(
+                repo_id=self.config.llm.model_repo,
+                filename=self.config.llm.model_filename,
                 verbose=self.config.debug_mode,
-                n_ctx=self.config.llm.context_window
+                n_ctx=self.config.llm.context_window,
+                logits_all=False,
+                embedding=False
             )
             
             self.is_initialized = True
@@ -114,38 +115,31 @@ class LLMWorker:
         try:
             self.logger.debug(f"Generating response with max_tokens={max_tokens}, temperature={temperature}")
             
-            # Use stream=True for token-by-token generation with specific stop sequences
-            stream = self.llm(
-                prompt, 
+            # Use create_chat_completion with proper chat format
+            response = self.llm.create_chat_completion(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
                 max_tokens=max_tokens,
-                temperature=temperature, 
-                stream=True,
-                stop=["<|user|>", "<|system|>", "</s>", "<s>"]
+                temperature=temperature,
+                stream=True
             )
             
             full_response = ""
             token_count = 0
             
-            for chunk in stream:
+            for chunk in response:
                 if isinstance(chunk, dict) and 'choices' in chunk:
-                    token = chunk['choices'][0].get('text', '')
-                    if token:
-                        # Check for complete prompt artifacts
-                        if any(indicator in token for indicator in ['<|user|', '<|system|', '<|assistant|', '</s>', '<s>']):
-                            break
-                        full_response += token
-                        token_count += 1
-                        yield token, full_response
-                        
-                elif hasattr(chunk, 'choices'):
-                    token = chunk.choices[0].text if chunk.choices else ''
-                    if token:
-                        # Check for complete prompt artifacts
-                        if any(indicator in token for indicator in ['<|user|', '<|system|', '<|assistant|', '</s>', '<s>']):
-                            break
-                        full_response += token
-                        token_count += 1
-                        yield token, full_response
+                    choice = chunk['choices'][0]
+                    if 'delta' in choice and 'content' in choice['delta']:
+                        token = choice['delta']['content']
+                        if token:
+                            full_response += token
+                            token_count += 1
+                            yield token, full_response
             
             # Update performance metrics
             response_time = time.time() - start_time

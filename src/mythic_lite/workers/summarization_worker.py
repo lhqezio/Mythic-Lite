@@ -18,8 +18,8 @@ class SummarizationWorker:
             # Create a minimal config if none provided
             self.config = type('Config', (), {
                 'summarization': type('SummarizationConfig', (), {
-                    'model_repo': 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
-                    'model_filename': 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf'
+                    'model_repo': 'MaziyarPanahi/gemma-3-1b-it-GGUF',
+                    'model_filename': 'gemma-3-1b-it.Q4_K_M.gguf'
                 })(),
                 'debug_mode': False
             })()
@@ -36,7 +36,7 @@ class SummarizationWorker:
     def initialize(self) -> bool:
         """Initialize the summarization model."""
         try:
-            self.logger.info("Attempting to load Llama-3.1-8B-Instruct summarization model...")
+            self.logger.info("Attempting to load Gemma-3-1B-IT summarization model...")
             
             # Use lazy import to avoid circular dependencies
             from ..core.model_manager import ensure_model
@@ -51,14 +51,17 @@ class SummarizationWorker:
             if not model_path:
                 raise Exception("Failed to download summarization model")
             
-            # Initialize model with configuration
+            # Initialize model with configuration using from_pretrained
             if not model_path.exists():
                 raise Exception(f"Model file not found: {model_path}")
             
-            self.summarizer = Llama(
-                model_path=str(model_path),
+            self.summarizer = Llama.from_pretrained(
+                repo_id=self.config.summarization.model_repo,
+                filename=self.config.summarization.model_filename,
                 verbose=self.config.debug_mode,
-                n_ctx=256  # Smaller context for summarization
+                n_ctx=256,  # Smaller context for summarization
+                logits_all=False,
+                embedding=False
             )
             
             self.is_initialized = True
@@ -81,14 +84,15 @@ class SummarizationWorker:
             return False
         
         try:
-            # Test prompt using Llama instruction format - simplified for faster response
-            test_prompt = """<|begin_of_text|><|start_header_id|>user<|end_header_id|>
-
-Summarize this scenario from your perspective: "Visitor needs help with a problem."<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-From my perspective, this scenario involves: """
+            # Test prompt using chat format
+            test_messages = [
+                {
+                    "role": "user",
+                    "content": "Summarize this scenario from your perspective: 'Visitor needs help with a problem.'"
+                }
+            ]
             
-            self.logger.debug(f"[DEBUG] Test prompt: {test_prompt}")
+            self.logger.debug(f"[DEBUG] Test messages: {test_messages}")
             
             # Test with timeout protection (cross-platform)
             result = [None]
@@ -97,11 +101,11 @@ From my perspective, this scenario involves: """
             def test_model():
                 try:
                     self.logger.debug("[DEBUG] Calling summarizer for test...")
-                    response = self.summarizer(
-                        test_prompt,
+                    response = self.summarizer.create_chat_completion(
+                        messages=test_messages,
                         max_tokens=20,  # Very short for test
                         temperature=0.0,  # Zero temperature to prevent hallucination
-                        stop=["<|eot_id|>"]
+                        stream=False
                     )
                     self.logger.debug(f"[DEBUG] Got test response: {response}")
                     result[0] = response
@@ -141,28 +145,29 @@ From my perspective, this scenario involves: """
             return False
     
     def create_ai_summary(self, text, max_length=100):
-        """Use the Llama model to create intelligent summaries"""
+        """Use the Gemma model to create intelligent summaries"""
         if not self.is_enabled or not self.summarizer or not text:
             return None
         
         try:
             # Validate the summarization model is still working
-            if not hasattr(self.summarizer, 'generate') and not hasattr(self.summarizer, '__call__'):
+            if not hasattr(self.summarizer, 'create_chat_completion'):
                 self.logger.warning("Summarization model appears to be corrupted, disabling...")
                 self.summarizer = None
                 self.is_enabled = False
                 return None
             
-            # Create a prompt using Llama instruction format - from Mythic's perspective
-            summary_prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-You are Mythic, a 19th century mercenary AI. Summarize this conversation as a scenario from your perspective - what situation the visitor is in, what they need help with, and how you're assisting them. Focus on the practical scenario and context. Keep summaries under {max_length} characters. Write as if you're recalling a client interaction.<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-Summarize this conversation scenario from your perspective as Mythic:
-
-{text}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-From my perspective, this scenario involves: """
+            # Create a prompt using chat format - from Mythic's perspective
+            summary_messages = [
+                {
+                    "role": "system",
+                    "content": f"You are Mythic, a 19th century mercenary AI. Summarize this conversation as a scenario from your perspective - what situation the visitor is in, what they need help with, and how you're assisting them. Focus on the practical scenario and context. Keep summaries under {max_length} characters. Write as if you're recalling a client interaction."
+                },
+                {
+                    "role": "user",
+                    "content": f"Summarize this conversation scenario from your perspective as Mythic:\n\n{text}"
+                }
+            ]
             
             # Generate summary with timeout protection (cross-platform)
             result = [None]
@@ -170,11 +175,11 @@ From my perspective, this scenario involves: """
             
             def generate_summary():
                 try:
-                    response = self.summarizer(
-                        summary_prompt,
+                    response = self.summarizer.create_chat_completion(
+                        messages=summary_messages,
                         max_tokens=80,
                         temperature=0.0,  # Zero temperature to prevent hallucination
-                        stop=["<|eot_id|>"]
+                        stream=False
                     )
                     result[0] = response
                 except Exception as e:
@@ -203,17 +208,16 @@ From my perspective, this scenario involves: """
                 self.logger.warning("No response generated from summarization model")
                 return None
             elif isinstance(result[0], dict) and 'choices' in result[0]:
-                summary = result[0]['choices'][0].get('text', '').strip()
+                summary = result[0]['choices'][0].get('message', {}).get('content', '').strip()
                 self.logger.debug(f"[DEBUG] Raw text from choices: '{summary}'")
             elif hasattr(result[0], 'choices'):
-                summary = result[0].choices[0].text.strip() if result[0].choices else ''
+                summary = result[0].choices[0].message.content.strip() if result[0].choices else ''
                 self.logger.debug(f"[DEBUG] Raw text from choices: '{summary}'")
             else:
                 self.logger.warning(f"[create_ai_summary] Unexpected response format: {type(result[0])} - {result[0]}")
                 summary = str(result[0]).strip()
             
             # Clean up the summary
-            summary = summary.replace('<|eot_id|>', '').strip()
             self.logger.debug(f"[DEBUG] After cleaning: '{summary}'")
             
             # Remove common unwanted prefixes
@@ -244,13 +248,13 @@ From my perspective, this scenario involves: """
             return None
     
     def create_topic_summary(self, topic, relevant_messages, max_length=150):
-        """Create an intelligent summary of a specific conversation topic using Llama"""
+        """Create an intelligent summary of a specific conversation topic using Gemma"""
         if not self.is_enabled or not self.summarizer or not relevant_messages:
             return None
         
         try:
             # Validate the summarization model is still working
-            if not hasattr(self.summarizer, 'generate') and not hasattr(self.summarizer, '__call__'):
+            if not hasattr(self.summarizer, 'create_chat_completion'):
                 self.logger.warning("Summarization model appears to be corrupted, disabling...")
                 self.summarizer = None
                 self.is_enabled = False
@@ -262,16 +266,17 @@ From my perspective, this scenario involves: """
                 role = "Visitor" if msg['role'] == 'user' else "Mythic"
                 topic_text += f"{role}: {msg['content']}\n"
             
-            # Create a focused summary prompt using Llama format - from Mythic's perspective
-            summary_prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-You are Mythic, a 19th century mercenary AI. Create focused summaries of specific conversation topics from your perspective, as if you're recalling what you and the visitor discussed about this topic. Focus on what was discussed and key points mentioned. Keep it under {max_length} characters. Write in a conversational, personal tone.<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-Summarize from your perspective what we discussed about "{topic}". Keep it under {max_length} characters:
-
-{topic_text}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-From my perspective, we discussed: """
+            # Create a focused summary prompt using chat format - from Mythic's perspective
+            summary_messages = [
+                {
+                    "role": "system",
+                    "content": f"You are Mythic, a 19th century mercenary AI. Create focused summaries of specific conversation topics from your perspective, as if you're recalling what you and the visitor discussed about this topic. Focus on what was discussed and key points mentioned. Keep it under {max_length} characters. Write in a conversational, personal tone."
+                },
+                {
+                    "role": "user",
+                    "content": f"Summarize from your perspective what we discussed about '{topic}'. Keep it under {max_length} characters:\n\n{topic_text}"
+                }
+            ]
             
             # Generate topic summary with timeout protection (cross-platform)
             result = [None]
@@ -279,11 +284,11 @@ From my perspective, we discussed: """
             
             def generate_topic_summary():
                 try:
-                    response = self.summarizer(
-                        summary_prompt,
+                    response = self.summarizer.create_chat_completion(
+                        messages=summary_messages,
                         max_tokens=80,
                         temperature=0.0,  # Zero temperature to prevent hallucination
-                        stop=["<|eot_id|>"]
+                        stream=False
                     )
                     result[0] = response
                 except Exception as e:
@@ -312,17 +317,16 @@ From my perspective, we discussed: """
                 self.logger.warning("No response generated from summarization model")
                 return None
             elif isinstance(result[0], dict) and 'choices' in result[0]:
-                summary = result[0]['choices'][0].get('text', '').strip()
+                summary = result[0]['choices'][0].get('message', {}).get('content', '').strip()
                 self.logger.debug(f"[DEBUG] Raw text from choices: '{summary}'")
             elif hasattr(result[0], 'choices'):
-                summary = result[0].choices[0].text.strip() if result[0].choices else ''
+                summary = result[0].choices[0].message.content.strip() if result[0].choices else ''
                 self.logger.debug(f"[DEBUG] Raw text from choices: '{summary}'")
             else:
                 self.logger.warning(f"[create_topic_summary] Unexpected response format: {type(result[0])} - {result[0]}")
                 summary = str(result[0]).strip()
             
             # Clean up the summary
-            summary = summary.replace('<|eot_id|>', '').strip()
             self.logger.debug(f"[DEBUG] After cleaning: '{summary}'")
             
             # Remove common unwanted prefixes
@@ -359,7 +363,7 @@ From my perspective, we discussed: """
             return True
         
         try:
-            self.logger.info("Attempting to reload Llama-3.1-8B-Instruct summarization model...")
+            self.logger.info("Attempting to reload Gemma-3-1B-IT summarization model...")
             
             # Ensure model is downloaded
             model_path = ensure_model(
@@ -371,14 +375,17 @@ From my perspective, we discussed: """
             if not model_path:
                 raise Exception("Failed to download summarization model")
             
-            # For local GGUF files, use Llama() directly instead of from_pretrained()
-            # model_path already includes the filename, so use it directly
+            # Initialize model with configuration using from_pretrained
             if not model_path.exists():
                 raise Exception(f"Model file not found: {model_path}")
             
-            self.summarizer = Llama(
-                model_path=str(model_path),
-                verbose=self.config.debug_mode
+            self.summarizer = Llama.from_pretrained(
+                repo_id=self.config.summarization.model_repo,
+                filename=self.config.summarization.model_filename,
+                verbose=self.config.debug_mode,
+                n_ctx=256,  # Smaller context for summarization
+                logits_all=False,
+                embedding=False
             )
             
             if self.test_summarization_model():
@@ -422,30 +429,28 @@ From my perspective, we discussed: """
         try:
             # If we have a previous summary, create an incremental update
             if current_summary:
-                prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-You are Mythic, a 19th century mercenary AI. Update your existing scenario summary with new developments. Write from your perspective as if you're recalling a client interaction that's evolving. Keep the updated summary under {max_length} characters. Focus on how the situation is developing.<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-Update your existing scenario summary with new conversation content:
-
-Your Previous Summary: {current_summary}
-
-New Conversation: {conversation_text}
-
-Updated Summary from your perspective:<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-From my perspective, this scenario is now: """
+                messages = [
+                    {
+                        "role": "system",
+                        "content": f"You are Mythic, a 19th century mercenary AI. Update your existing scenario summary with new developments. Write from your perspective as if you're recalling a client interaction that's evolving. Keep the updated summary under {max_length} characters. Focus on how the situation is developing."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Update your existing scenario summary with new conversation content:\n\nYour Previous Summary: {current_summary}\n\nNew Conversation: {conversation_text}\n\nUpdated Summary from your perspective:"
+                    }
+                ]
             else:
                 # First-time summary
-                prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-You are Mythic, a 19th century mercenary AI. Summarize this conversation as a scenario from your perspective - what situation the visitor is in, what they need help with, and how you're assisting them. Focus on the practical scenario and context. Keep summaries under {max_length} characters. Write as if you're recalling a new client interaction.<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-Summarize this conversation scenario from your perspective as Mythic:
-
-{conversation_text}<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-From my perspective, this scenario involves: """
+                messages = [
+                    {
+                        "role": "system",
+                        "content": f"You are Mythic, a 19th century mercenary AI. Summarize this conversation as a scenario from your perspective - what situation the visitor is in, what they need help with, and how you're assisting them. Focus on the practical scenario and context. Keep summaries under {max_length} characters. Write as if you're recalling a new client interaction."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Summarize this conversation scenario from your perspective as Mythic:\n\n{conversation_text}"
+                    }
+                ]
             
             # Generate incremental summary with timeout protection
             result = [None]
@@ -453,12 +458,12 @@ From my perspective, this scenario involves: """
             
             def generate_incremental_summary():
                 try:
-                    self.logger.debug(f"[DEBUG] Calling summarizer with prompt: {prompt[:100]}...")
-                    response = self.summarizer(
-                        prompt,
+                    self.logger.debug(f"[DEBUG] Calling summarizer with messages: {messages[0]['content'][:100]}...")
+                    response = self.summarizer.create_chat_completion(
+                        messages=messages,
                         max_tokens=80,
                         temperature=0.0,  # Zero temperature to prevent hallucination
-                        stop=["<|eot_id|>"]
+                        stream=False
                     )
                     self.logger.debug(f"[DEBUG] Got response: {response}")
                     result[0] = response
@@ -489,17 +494,16 @@ From my perspective, this scenario involves: """
                 self.logger.warning("No response generated from summarization model")
                 return None
             elif isinstance(result[0], dict) and 'choices' in result[0]:
-                summary = result[0]['choices'][0].get('text', '').strip()
+                summary = result[0]['choices'][0].get('message', {}).get('content', '').strip()
                 self.logger.debug(f"[DEBUG] Raw text from choices: '{summary}'")
             elif hasattr(result[0], 'choices'):
-                summary = result[0].choices[0].text.strip() if result[0].choices else ''
+                summary = result[0].choices[0].message.content.strip() if result[0].choices else ''
                 self.logger.debug(f"[DEBUG] Raw text from choices: '{summary}'")
             else:
                 self.logger.warning(f"[create_continuous_summary] Unexpected response format: {type(result[0])} - {result[0]}")
                 summary = str(result[0]).strip()
             
             # Clean up the summary
-            summary = summary.replace('<|eot_id|>', '').strip()
             self.logger.debug(f"[DEBUG] After cleaning: '{summary}'")
             
             # Remove common unwanted prefixes

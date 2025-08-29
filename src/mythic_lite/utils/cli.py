@@ -94,8 +94,8 @@ def create_debug_config():
         
         # TTS configuration
         tts = type('obj', (object,), {
-            'voice_path': 'amy-low',
-            'sample_rate': 22050,
+                    'voice_path': 'ljspeech-high',
+        'sample_rate': 22050,
             'channels': 1,
             'audio_format': 'paInt16',
             'enable_audio': True,
@@ -117,8 +117,8 @@ def create_debug_config():
         
         # LLM configuration
         llm = type('obj', (object,), {
-            'model_repo': 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
-            'model_filename': 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
+            'model_repo': 'MaziyarPanahi/gemma-3-1b-it-GGUF',
+            'model_filename': 'gemma-3-1b-it.Q4_K_M.gguf',
             'max_tokens': 150,
             'temperature': 0.7,
             'context_window': 512
@@ -126,8 +126,8 @@ def create_debug_config():
         
         # Summarization configuration
         summarization = type('obj', (object,), {
-            'model_repo': 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
-            'model_filename': 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
+            'model_repo': 'MaziyarPanahi/gemma-3-1b-it-GGUF',
+            'model_filename': 'gemma-3-1b-it.Q4_K_M.gguf',
             'max_tokens': 80,
             'temperature': 0.0
         })()
