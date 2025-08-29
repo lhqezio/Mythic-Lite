@@ -144,11 +144,11 @@ class MythicLogger:
         """Log success message with custom styling."""
         if self.console:
             try:
-                self.console.print(f"✅ {message}", style="bold green", **kwargs)
+                self.console.print(f"[SUCCESS] {message}", style="bold green", **kwargs)
             except:
-                self.logger.info(f"✅ {message}")
+                self.logger.info(f"[SUCCESS] {message}")
         else:
-            self.logger.info(f"✅ {message}")
+            self.logger.info(f"[SUCCESS] {message}")
     
     def mythic_speak(self, message: str, **kwargs):
         """Log Mythic's speech with special styling."""
@@ -174,11 +174,11 @@ class MythicLogger:
         """Log system information with special styling."""
         if self.console:
             try:
-                self.console.print(f"ℹ {message}", style="bold cyan", **kwargs)
+                self.console.print(f"[INFO] {message}", style="bold cyan", **kwargs)
             except:
-                self.logger.info(f"ℹ {message}")
+                self.logger.info(f"[INFO] {message}")
         else:
-            self.logger.info(f"ℹ {message}")
+            self.logger.info(f"[INFO] {message}")
     
     def print_panel(self, content: str, title: str = "", style: str = "blue"):
         """Print content in a rich panel."""

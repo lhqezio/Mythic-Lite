@@ -68,41 +68,41 @@ class ChatbotOrchestrator:
         
         try:
             # Initialize LLM worker
-            self.logger.debug("🐛 Initializing LLM worker...")
+            self.logger.debug("Initializing LLM worker...")
             if not self.llm_worker.initialize():
                 self.logger.critical("Failed to initialize LLM worker!")
                 return False
-            self.logger.debug("🐛 LLM worker initialized successfully")
+            self.logger.debug("LLM worker initialized successfully")
             
             # Update memory worker with LLM reference
             self.memory_worker.set_llm_worker(self.llm_worker)
             
             # Initialize memory worker
-            self.logger.debug("🐛 Initializing memory worker...")
+            self.logger.debug("Initializing memory worker...")
             if not self.memory_worker.initialize():
                 self.logger.warning("Memory worker initialization failed - memory management will be limited")
             else:
-                self.logger.debug("🐛 Memory worker initialized successfully")
+                self.logger.debug("Memory worker initialized successfully")
             
             # Initialize TTS worker
-            self.logger.debug("🐛 Initializing TTS worker...")
+            self.logger.debug("Initializing TTS worker...")
             if not self.tts_worker.initialize():
                 self.logger.warning("TTS initialization failed - audio will be disabled")
             else:
                 self.logger.success("TTS system initialized successfully!")
-                self.logger.debug("🐛 TTS worker initialized successfully")
+                self.logger.debug("TTS worker initialized successfully")
             
             # Initialize ASR worker if enabled
             if self.config.asr.enable_asr:
                 try:
-                    self.logger.debug("🐛 Initializing ASR worker...")
+                    self.logger.debug("Initializing ASR worker...")
                     self.asr_worker.set_callbacks(
                         on_transcription=self._handle_speech_input,
                         on_error=None,  # Disable error callbacks to prevent console conflicts
                         on_listening=None  # Disable listening callbacks to prevent console conflicts
                     )
                     self.logger.success("ASR system initialized successfully!")
-                    self.logger.debug("🐛 ASR worker initialized successfully")
+                    self.logger.debug("ASR worker initialized successfully")
                 except Exception as e:
                     self.logger.warning(f"ASR initialization failed: {e}")
             
@@ -219,7 +219,7 @@ class ChatbotOrchestrator:
             return
             
         self.logger.print_banner()
-        self.logger.info("🎤 Running in voice-only mode")
+        self.logger.info("Running in voice-only mode")
         self.logger.info("Commands: 'debug' for troubleshooting, 'status' for system info, 'quit' to exit")
         self.logger.console.print()
         
@@ -239,16 +239,16 @@ class ChatbotOrchestrator:
             # Start ASR recording if enabled
             if self.config.asr.enable_asr:
                 if self.asr_worker.start_recording():
-                    self.logger.success("🎤 Voice recording started - speak now!")
-                    self.logger.info("💬 Press Ctrl+C to stop, or just start speaking!")
+                                self.logger.success("Voice recording started - speak now!")
+            self.logger.info("Press Ctrl+C to stop, or just start speaking!")
                     # Show listening status
                     self.logger.update_speech_status("listening")
                 else:
-                    self.logger.warning("⚠️  Failed to start voice recording")
+                    self.logger.warning("Failed to start voice recording")
             
             # Voice-only loop - just keep listening and show status
             try:
-                self.logger.info("💬 Press Ctrl+C to stop, or just start speaking!")
+                self.logger.info("Press Ctrl+C to stop, or just start speaking!")
                 self.logger.console.print()
                 
                 while True:
