@@ -71,10 +71,10 @@ Repository = "https://github.com/mythic-lite/mythic-lite.git"
 "Changelog" = "https://github.com/mythic-lite/mythic-lite/blob/main/CHANGELOG.md"
 
 [project.scripts]
-mythic-lite = "mythic_lite.utils.cli:main"
+mythic-lite = "mythic_lite.utils.cli:cli"
 
 [project.gui-scripts]
-mythic-lite-gui = "mythic_lite.utils.cli:main"
+mythic-lite-gui = "mythic_lite.utils.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
