@@ -1,23 +1,44 @@
 """
-Utility components for Mythic-Lite AI chatbot system.
+Utilities module for Mythic-Lite chatbot system.
 
-This module contains utility functions and classes for:
-- CLI interface
-- Logging
-- Platform-specific input handling
+Provides common utilities, logging, CLI, and configuration management.
 """
 
-from .logger import Logger
-from .windows_input import WindowsInput
+from .logger import (
+    get_logger,
+    get_performance_logger,
+    set_log_level,
+    get_logger_stats,
+    log_function_entry,
+    log_function_exit,
+    log_error_with_context,
+    log_performance_metric,
+    logged_operation
+)
 
-# Use lazy import to avoid circular dependencies
-def get_cli():
-    """Get the CLI class (lazy import to avoid circular dependencies)."""
-    from .cli import cli
-    return cli
+from .cli import main
+from .cli_commands import *
+from .cli_helpers import *
+from .config_manager import *
+from .common import *
+from .windows_input import *
 
 __all__ = [
-    'Logger',
-    'WindowsInput',
-    'get_cli'
+    # Logging
+    'get_logger',
+    'get_performance_logger',
+    'set_log_level',
+    'get_logger_stats',
+    'log_function_entry',
+    'log_function_exit',
+    'log_error_with_context',
+    'log_performance_metric',
+    'logged_operation',
+    
+    # CLI
+    'main',
+    
+    # Other utilities
+    'safe_input',
+    'safe_choice'
 ]

@@ -1,87 +1,144 @@
 """
 LLM Worker module for Mythic-Lite chatbot system.
-Handles the main language model for conversation generation.
+
+Handles language model operations using the LLM abstraction layer,
+providing a clean interface for model interactions with performance monitoring.
 """
 
-import threading
 import time
-from typing import Generator, Tuple, Optional, Dict, Any
-from llama_cpp import Llama
+from typing import Generator, Tuple, Optional, Dict, Any, List
+from pathlib import Path
 
-# Use lazy imports to avoid circular dependencies
-def get_core_modules():
-    """Get core modules when needed."""
-    from ..core.config import get_config
-    from ..core.model_manager import ensure_model
-    return get_config, ensure_model
-
-from ..utils.logger import get_logger
+from ..core.llm import BaseLLM, LLMConfig, ModelType, ChatMessage, LLMResponse
+from ..core.llm.factory import get_llm_factory
+from ..utils.logger import get_logger, logged_operation
 
 
 class LLMWorker:
-    """Worker class for handling the main LLM conversation model."""
+    """Worker class for handling language model operations with performance monitoring."""
     
     def __init__(self, config: Optional[Any] = None):
-        # Get core modules when needed
-        get_config, ensure_model = get_core_modules()
-        
-        self.config = config or get_config()
+        """Initialize the LLM worker with configuration."""
+        self.config = config
         self.logger = get_logger("llm-worker")
         
-        self.llm: Optional[Llama] = None
+        # LLM instance using abstraction layer
+        self.llm: Optional[BaseLLM] = None
         self.is_initialized: bool = False
         self.initialization_error: Optional[str] = None
+        
+        # Factory for creating models
+        self.factory = get_llm_factory()
         
         # Performance tracking
         self.total_requests: int = 0
         self.total_tokens_generated: int = 0
         self.average_response_time: float = 0.0
+        self.total_response_time: float = 0.0
+        
+        # Worker state
+        self.last_activity: Optional[float] = None
+        
+        self.logger.debug("LLM worker initialized")
         
     def initialize(self) -> bool:
-        """Initialize the main LLM model."""
+        """Initialize the language model using the abstraction layer."""
+        with logged_operation(self.logger, "llm_worker_initialize"):
+            try:
+                self.logger.info("Initializing language model...")
+                
+                # Create LLM configuration
+                llm_config = self._create_llm_config()
+                
+                # Validate configuration
+                validation = self.factory.validate_model_config(llm_config)
+                if not validation['valid']:
+                    errors = ', '.join(validation['errors'])
+                    raise ValueError(f"Invalid LLM configuration: {errors}")
+                
+                # Log warnings if any
+                if validation['warnings']:
+                    for warning in validation['warnings']:
+                        self.logger.warning(f"Configuration warning: {warning}")
+                
+                # Create model instance
+                self.llm = self.factory.create_model(llm_config)
+                
+                # Initialize the model
+                if not self.llm.initialize():
+                    raise RuntimeError("Failed to initialize language model")
+                
+                self.is_initialized = True
+                self.initialization_error = None
+                self.last_activity = time.time()
+                
+                self.logger.info(f"Language model initialized successfully: {self.llm.model_name}")
+                self.logger.info(f"Model type: {self.llm.config.model_type.value}")
+                
+                return True
+                
+            except Exception as e:
+                self.initialization_error = str(e)
+                self.logger.error(f"Failed to initialize language model: {e}")
+                return False
+    
+    def _create_llm_config(self) -> LLMConfig:
+        """Create LLM configuration from the main config."""
         try:
-            self.logger.info("Initializing main LLM model...")
+            # Extract LLM settings from main config
+            llm_settings = self.config.llm if hasattr(self.config, 'llm') else {}
             
-            # Get core modules when needed
-            get_config, ensure_model = get_core_modules()
-            
-            # Ensure model is downloaded
-            model_path = ensure_model(
-                "llm",
-                self.config.llm.model_repo,
-                self.config.llm.model_filename
+            # Create LLM configuration
+            config = LLMConfig(
+                model_type=ModelType.LLAMA_CPP,  # Default to LLaMA CPP
+                model_repo=llm_settings.get('model_repo'),
+                model_filename=llm_settings.get('model_filename'),
+                max_tokens=llm_settings.get('max_tokens', 140),
+                temperature=llm_settings.get('temperature', 0.85),
+                context_window=llm_settings.get('context_window', 2048),
+                top_p=llm_settings.get('top_p', 0.9),
+                top_k=llm_settings.get('top_k', 40),
+                repeat_penalty=llm_settings.get('repeat_penalty', 1.1),
+                n_gpu_layers=llm_settings.get('n_gpu_layers', 0),
+                n_threads=llm_settings.get('n_threads', 4),
+                verbose=getattr(self.config, 'debug_mode', False)
             )
             
-            if not model_path:
-                raise Exception("Failed to download LLM model")
-            
-            # Initialize model with configuration using from_pretrained
-            if not model_path.exists():
-                raise Exception(f"Model file not found: {model_path}")
-            
-            self.llm = Llama.from_pretrained(
-                repo_id=self.config.llm.model_repo,
-                filename=self.config.llm.model_filename,
-                verbose=self.config.debug_mode,
-                n_ctx=self.config.llm.context_window,
-                logits_all=False,
-                embedding=False
-            )
-            
-            self.is_initialized = True
-            self.initialization_error = None
-            
-            self.logger.success("Main LLM model initialized successfully!")
-            self.logger.info(f"Model: {self.config.llm.model_repo}")
-            self.logger.info(f"Context window: {self.config.llm.context_window} tokens")
-            
-            return True
+            return config
             
         except Exception as e:
-            self.initialization_error = str(e)
-            self.logger.error(f"Failed to initialize main LLM model: {e}")
-            self.logger.debug(f"Initialization error details: {e}", exc_info=True)
-            return False
+            self.logger.error(f"Failed to create LLM config: {e}")
+            # Return default config as fallback
+            return self.factory.get_default_config()
+    
+    def generate_response(
+        self, 
+        prompt: str, 
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None
+    ) -> Optional[str]:
+        """Generate a response from a prompt."""
+        if not self.is_available():
+            self.logger.error("Language model not available")
+            return None
+        
+        with logged_operation(self.logger, "generate_response", prompt_length=len(prompt)):
+            try:
+                response = self.llm.generate_text(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                )
+                
+                # Update performance metrics
+                self._update_performance_metrics(response.tokens_generated, response.response_time)
+                self.last_activity = time.time()
+                
+                return response.text
+                
+            except Exception as e:
+                self.logger.error(f"Failed to generate response: {e}")
+                return None
     
     def generate_response_stream(
         self, 
@@ -89,329 +146,209 @@ class LLMWorker:
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None
     ) -> Generator[Tuple[str, str], None, None]:
-        """
-        Generate response using Llama with streaming.
-        
-        Args:
-            prompt: Input prompt for the model
-            max_tokens: Maximum tokens to generate (uses config default if None)
-            temperature: Sampling temperature (uses config default if None)
-            
-        Yields:
-            Tuple of (token, full_response)
-        """
-        if not self.is_initialized or not self.llm:
-            error_msg = "LLM not initialized"
-            self.logger.error(error_msg)
-            yield error_msg, ""
+        """Generate response using streaming."""
+        if not self.is_available():
+            self.logger.error("Language model not available")
             return
         
-        # Use configuration defaults if not specified
-        max_tokens = max_tokens or self.config.llm.max_tokens
-        temperature = temperature or self.config.llm.temperature
-        
-        start_time = time.time()
-        
-        try:
-            self.logger.debug(f"Generating response with max_tokens={max_tokens}, temperature={temperature}")
-            
-            # Use create_chat_completion with optimized chat format for better token efficiency
-            response = self.llm.create_chat_completion(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=True,
-                top_p=0.92,  # Increased for more creative responses
-                top_k=45,    # Balanced for engaging but focused responses
-                repeat_penalty=1.1,  # Added to prevent repetitive responses
-                stop=["</s>", "<|end|>", "\n\n", "Mythic:", "User:"]  # Natural breakpoints for lore sharing
-            )
-            
-            full_response = ""
-            token_count = 0
-            
-            for chunk in response:
-                if isinstance(chunk, dict) and 'choices' in chunk:
-                    choice = chunk['choices'][0]
-                    if 'delta' in choice and 'content' in choice['delta']:
-                        token = choice['delta']['content']
-                        if token:
-                            full_response += token
-                            token_count += 1
-                            yield token, full_response
-            
-            # Update performance metrics
-            response_time = time.time() - start_time
-            self._update_performance_metrics(token_count, response_time)
-            
-            self.logger.debug(f"Generated {token_count} tokens in {response_time:.2f}s")
-                        
-        except Exception as e:
-            error_msg = f"Error generating response: {e}"
-            self.logger.error(error_msg)
-            self.logger.debug(f"Response generation error details: {e}", exc_info=True)
-            yield error_msg, ""
-
-    def generate_response(
+        with logged_operation(self.logger, "generate_response_stream", prompt_length=len(prompt)):
+            try:
+                accumulated_text = ""
+                
+                for response in self.llm.generate_text_stream(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                ):
+                    if response.text:
+                        accumulated_text += response.text
+                        yield response.text, accumulated_text
+                
+                # Update performance metrics with final response
+                if hasattr(response, 'tokens_generated') and hasattr(response, 'response_time'):
+                    self._update_performance_metrics(response.tokens_generated, response.response_time)
+                
+                self.last_activity = time.time()
+                
+            except Exception as e:
+                self.logger.error(f"Failed to generate streaming response: {e}")
+    
+    def generate_chat_response(
         self, 
-        prompt: str, 
+        messages: List[Dict[str, str]], 
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None
-    ) -> str:
-        """
-        Generate a single response without streaming.
+    ) -> Optional[str]:
+        """Generate a response from chat messages."""
+        if not self.is_available():
+            self.logger.error("Language model not available")
+            return None
         
-        Args:
-            prompt: The input prompt
-            max_tokens: Maximum tokens to generate
-            temperature: Temperature for generation
-            
-        Returns:
-            Generated response text
-        """
-        if not self.is_initialized or not self.llm:
-            error_msg = "LLM not initialized"
-            self.logger.error(error_msg)
-            return error_msg
-        
-        max_tokens = max_tokens or self.config.llm.max_tokens
-        temperature = temperature or self.config.llm.temperature
-        
-        start_time = time.time()
-        
-        try:
-            self.logger.debug(f"Generating response with max_tokens={max_tokens}, temperature={temperature}")
-            
-            # Simplified stop tokens to prevent early stopping
-            simple_stop_tokens = ["</s>", "<|end|>", "\n\n"]
-            
-            response = self.llm.create_chat_completion(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=False,  # Non-streaming
-                top_p=0.92,
-                top_k=45,
-                repeat_penalty=1.2,  # Increased from 1.1 to prevent repetition
-                stop=simple_stop_tokens  # Use simpler stop tokens to prevent early stopping
-            )
-            
-            # Extract the response content
-            if response and 'choices' in response and len(response['choices']) > 0:
-                content = response['choices'][0]['message']['content']
+        with logged_operation(self.logger, "generate_chat_response", message_count=len(messages)):
+            try:
+                # Convert to ChatMessage format
+                chat_messages = [
+                    ChatMessage(role=msg['role'], content=msg['content'])
+                    for msg in messages
+                ]
                 
-                # Validate response quality - prevent repetitive responses
-                if self._is_repetitive_response(content):
-                    self.logger.warning("Detected repetitive response, regenerating...")
-                    # Try one more time with different parameters
-                    response = self.llm.create_chat_completion(
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": prompt + "\n\nPlease provide a fresh, unique response."
-                            }
-                        ],
-                        max_tokens=max_tokens,
-                        temperature=temperature + 0.1,  # Slightly higher temperature
-                        stream=False,
-                        top_p=0.95,  # Slightly higher top_p
-                        top_k=50,    # Slightly higher top_k
-                        repeat_penalty=1.3,  # Higher repeat penalty
-                        stop=enhanced_stop_tokens
-                    )
-                    
-                    if response and 'choices' in response and len(response['choices']) > 0:
-                        content = response['choices'][0]['message']['content']
+                response = self.llm.generate_chat(
+                    messages=chat_messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                )
                 
                 # Update performance metrics
-                token_count = self.estimate_token_count(content)
-                response_time = time.time() - start_time
-                self._update_performance_metrics(token_count, response_time)
+                self._update_performance_metrics(response.tokens_generated, response.response_time)
+                self.last_activity = time.time()
                 
-                self.logger.debug(f"Generated {token_count} tokens in {response_time:.2f}s")
-                return content
-            else:
-                # Better debugging for failed responses
-                self.logger.warning(f"LLM response structure unexpected: {response}")
-                if response:
-                    self.logger.debug(f"Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
-                    if 'choices' in response:
-                        self.logger.debug(f"Choices length: {len(response['choices'])}")
-                        if response['choices']:
-                            self.logger.debug(f"First choice: {response['choices'][0]}")
+                return response.text
                 
-                # Try to extract content even if structure is unexpected
-                if response and isinstance(response, dict):
-                    # Try different possible response structures
-                    if 'choices' in response and response['choices']:
-                        choice = response['choices'][0]
-                        if isinstance(choice, dict):
-                            if 'message' in choice and 'content' in choice['message']:
-                                content = choice['message']['content']
-                                self.logger.info(f"Extracted content from unexpected structure: {content[:50]}...")
-                                return content
-                            elif 'text' in choice:
-                                content = choice['text']
-                                self.logger.info(f"Extracted text from unexpected structure: {content[:50]}...")
-                                return content
-                            elif 'content' in choice:
-                                content = choice['content']
-                                self.logger.info(f"Extracted content directly: {content[:50]}...")
-                                return content
-                    
-                    # Try to find any text content in the response
-                    response_str = str(response)
-                    if len(response_str) > 20:
-                        self.logger.warning(f"Response contains data but no extractable content: {response_str[:100]}...")
-                
-                return "No response generated"
-                        
-        except Exception as e:
-            error_msg = f"Error generating response: {e}"
-            self.logger.error(error_msg)
-            self.logger.debug(f"Response generation error details: {e}", exc_info=True)
-            return error_msg
+            except Exception as e:
+                self.logger.error(f"Failed to generate chat response: {e}")
+                return None
     
-    def estimate_token_count(self, text: str) -> int:
-        """
-        Rough estimate of token count.
+    def generate_chat_response_stream(
+        self, 
+        messages: List[Dict[str, str]], 
+        max_tokens: Optional[int] = None,
+        temperature: Optional[float] = None
+    ) -> Generator[Tuple[str, str], None, None]:
+        """Generate chat response using streaming."""
+        if not self.is_available():
+            self.logger.error("Language model not available")
+            return
         
-        Args:
-            text: Text to estimate tokens for
-            
-        Returns:
-            Estimated token count
-        """
-        # 4 chars per token is a reasonable approximation for most models
-        return len(text) // 4
+        with logged_operation(self.logger, "generate_chat_response_stream", message_count=len(messages)):
+            try:
+                # Convert to ChatMessage format
+                chat_messages = [
+                    ChatMessage(role=msg['role'], content=msg['content'])
+                    for msg in messages
+                ]
+                
+                accumulated_text = ""
+                
+                for response in self.llm.generate_chat_stream(
+                    messages=chat_messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature
+                ):
+                    if response.text:
+                        accumulated_text += response.text
+                        yield response.text, accumulated_text
+                
+                # Update performance metrics with final response
+                if hasattr(response, 'tokens_generated') and hasattr(response, 'response_time'):
+                    self._update_performance_metrics(response.tokens_generated, response.response_time)
+                
+                self.last_activity = time.time()
+                
+            except Exception as e:
+                self.logger.error(f"Failed to generate streaming chat response: {e}")
     
-    def check_prompt_length(self, prompt: str) -> int:
-        """
-        Check if prompt is getting too long for the context window.
+    def _update_performance_metrics(self, tokens: int, response_time: float):
+        """Update performance tracking metrics."""
+        self.total_requests += 1
+        self.total_tokens_generated += tokens
+        self.total_response_time += response_time
         
-        Args:
-            prompt: Prompt to check
-            
-        Returns:
-            Estimated token count
-        """
-        estimated_tokens = self.estimate_token_count(prompt)
-        max_tokens = self.config.llm.context_window
-        
-        if estimated_tokens > max_tokens * 0.8:  # 80% of context window
-            self.logger.warning(
-                f"Prompt is getting long (~{estimated_tokens} tokens). "
-                f"Context window: {max_tokens} tokens"
-            )
-        elif estimated_tokens > max_tokens * 0.6:  # 60% of context window
-            self.logger.info(f"Prompt length: ~{estimated_tokens} tokens")
-        
-        return estimated_tokens
+        # Calculate running average
+        self.average_response_time = self.total_response_time / self.total_requests
     
     def get_status(self) -> str:
         """Get the status of the LLM worker."""
-        if self.is_initialized:
-            return f"Main LLM: {self.config.llm.model_repo} (Loaded & Ready)"
-        elif self.initialization_error:
-            return f"Main LLM: Failed to initialize - {self.initialization_error}"
-        else:
-            return "Main LLM: Not initialized"
+        if not self.llm:
+            return "LLM: Not initialized"
+        
+        return f"LLM: {self.llm.model_name} ({self.llm.config.model_type.value})"
     
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get performance statistics."""
+        stats = {
+            'total_requests': self.total_requests,
+            'total_tokens_generated': self.total_tokens_generated,
+            'average_response_time': self.average_response_time,
+            'total_response_time': self.total_response_time,
+            'tokens_per_second': (
+                self.total_tokens_generated / self.total_response_time 
+                if self.total_response_time > 0 else 0
+            ),
+            'last_activity': self.last_activity,
+            'uptime_hours': (
+                (time.time() - self.last_activity) / 3600 
+                if self.last_activity else 0
+            )
+        }
+        
+        # Add LLM-specific stats if available
+        if self.llm:
+            stats.update(self.llm.get_performance_stats())
+        
+        return stats
+    
+    def is_available(self) -> bool:
+        """Check if the LLM is available for use."""
+        return self.is_initialized and self.llm and self.llm.is_available()
+    
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get information about the current model."""
+        if not self.llm:
+            return {'error': 'No model loaded'}
+        
         return {
-            "total_requests": self.total_requests,
-            "total_tokens_generated": self.total_tokens_generated,
-            "average_response_time": self.average_response_time,
-            "is_initialized": self.is_initialized
+            'name': self.llm.model_name,
+            'type': self.llm.config.model_type.value,
+            'config': {
+                'max_tokens': self.llm.config.max_tokens,
+                'temperature': self.llm.config.temperature,
+                'context_window': self.llm.config.context_window
+            },
+            'status': self.llm.get_status()
         }
     
-    def _update_performance_metrics(self, tokens_generated: int, response_time: float):
-        """Update performance tracking metrics."""
-        self.total_requests += 1
-        self.total_tokens_generated += tokens_generated
+    def reset_performance_metrics(self):
+        """Reset performance tracking metrics."""
+        self.total_requests = 0
+        self.total_tokens_generated = 0
+        self.average_response_time = 0.0
+        self.total_response_time = 0.0
         
-        # Update running average
-        if self.total_requests == 1:
-            self.average_response_time = response_time
-        else:
-            self.average_response_time = (
-                (self.average_response_time * (self.total_requests - 1) + response_time) 
-                / self.total_requests
-            )
+        if self.llm:
+            self.llm.reset_performance_metrics()
+        
+        self.logger.info("Performance metrics reset")
     
     def cleanup(self):
-        """Clean up resources."""
-        if self.llm:
+        """Cleanup LLM worker resources."""
+        with logged_operation(self.logger, "llm_worker_cleanup"):
+            if self.llm:
+                self.llm.cleanup()
+            
+            self.is_initialized = False
+            self.initialization_error = None
+            self.last_activity = None
+            
+            self.logger.info("LLM worker cleaned up")
+    
+    def health_check(self) -> Dict[str, Any]:
+        """Perform a health check on the LLM worker."""
+        health = {
+            'status': 'healthy' if self.is_available() else 'unhealthy',
+            'initialized': self.is_initialized,
+            'model_available': self.llm is not None and self.llm.is_available(),
+            'last_activity': self.last_activity,
+            'total_requests': self.total_requests,
+            'error': self.initialization_error
+        }
+        
+        # Test model if available
+        if self.is_available():
             try:
-                # Llama.cpp models don't have explicit cleanup methods
-                self.llm = None
-                self.is_initialized = False
-                self.logger.info("LLM worker cleaned up successfully")
+                test_response = self.generate_response("test", max_tokens=5)
+                health['test_response'] = bool(test_response)
             except Exception as e:
-                self.logger.error(f"Error during LLM cleanup: {e}")
-                self.logger.debug(f"Cleanup error details: {e}", exc_info=True)
-        else:
-            self.logger.debug("LLM worker already cleaned up")
-
-    def _is_repetitive_response(self, content: str) -> bool:
-        """
-        Check if response is repetitive or stuck in a loop.
+                health['test_response'] = False
+                health['test_error'] = str(e)
         
-        Args:
-            content: Response content to check
-            
-        Returns:
-            True if response appears repetitive
-        """
-        if not content or len(content) < 20:
-            return False
-        
-        # Check for repeated phrases
-        content_lower = content.lower()
-        
-        # Common repetitive patterns
-        repetitive_patterns = [
-            "blast it all",
-            "honestly, darling",
-            "bloody hell",
-            "by jove",
-            "mate",
-            "darling"
-        ]
-        
-        # Count occurrences of repetitive patterns
-        pattern_count = 0
-        for pattern in repetitive_patterns:
-            if pattern in content_lower:
-                pattern_count += content_lower.count(pattern)
-        
-        # If we have too many repetitive patterns, flag it
-        if pattern_count > 3:
-            return True
-        
-        # Check for repeated sentence structures
-        sentences = content.split('.')
-        if len(sentences) > 2:
-            # Check if first few words of sentences are repeated
-            first_words = []
-            for sentence in sentences[:3]:
-                words = sentence.strip().split()[:3]
-                if words:
-                    first_words.append(' '.join(words).lower())
-            
-            # If we have repeated sentence starters, flag it
-            if len(set(first_words)) < len(first_words):
-                return True
-        
-        return False
+        return health

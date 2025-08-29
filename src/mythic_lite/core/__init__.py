@@ -1,24 +1,94 @@
 """
-Core components for Mythic-Lite AI chatbot system.
+Core module for Mythic-Lite chatbot system.
 
-This module contains the main orchestration, conversation management,
-model management, and configuration components.
+Provides the main configuration, orchestration, and LLM abstraction components.
 """
 
-from .config import get_config, Config
-from .conversation_worker import ConversationWorker
-from .model_manager import ModelManager
+from .config import (
+    get_config, 
+    set_config, 
+    load_config_from_file, 
+    save_config_to_file, 
+    reset_config,
+    Config,
+    LogLevel,
+    LoggingConfig,
+    LLMConfig,
+    TTSConfig,
+    ASRConfig,
+    MemoryConfig,
+    ConversationConfig,
+    SystemConfig
+)
 
-# Use lazy imports to avoid circular dependencies
-def get_chatbot_orchestrator():
-    """Get the ChatbotOrchestrator class (lazy import to avoid circular dependencies)."""
-    from .chatbot_orchestrator import ChatbotOrchestrator
-    return ChatbotOrchestrator
+from .chatbot_orchestrator import ChatbotOrchestrator
+
+from .llm import (
+    BaseLLM,
+    LLMConfig as LLMConfigBase,
+    LLMResponse,
+    ChatMessage,
+    ModelType
+)
+
+from .llm.factory import (
+    get_llm_factory,
+    create_model,
+    create_llama_cpp_model,
+    validate_config,
+    get_available_models
+)
+
+from .character import (
+    CharacterConfig,
+    CharacterPersonality,
+    CharacterType,
+    CharacterManager,
+    get_character_manager,
+    get_character,
+    create_custom_character
+)
 
 __all__ = [
+    # Configuration
     'get_config',
+    'set_config', 
+    'load_config_from_file',
+    'save_config_to_file',
+    'reset_config',
     'Config',
-    'ConversationWorker', 
-    'ModelManager',
-    'get_chatbot_orchestrator'
+    'LogLevel',
+    'LoggingConfig',
+    'LLMConfig',
+    'TTSConfig',
+    'ASRConfig',
+    'MemoryConfig',
+    'ConversationConfig',
+    'SystemConfig',
+    
+    # Orchestration
+    'ChatbotOrchestrator',
+    
+    # LLM Abstraction
+    'BaseLLM',
+    'LLMConfigBase',
+    'LLMResponse',
+    'ChatMessage',
+    'ModelType',
+    
+    # LLM Factory
+    'get_llm_factory',
+    'create_model',
+    'create_llama_cpp_model',
+    'validate_config',
+    'get_available_models',
+    
+    # Character System
+    'CharacterConfig',
+    'CharacterPersonality',
+    'CharacterType',
+    'CharacterManager',
+    'get_character_manager',
+    'get_character',
+    'create_custom_character'
 ]

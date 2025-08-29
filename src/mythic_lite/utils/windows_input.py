@@ -31,7 +31,7 @@ class WindowsInputHandler:
             try:
                 return self._windows_input(prompt)
             except Exception as e:
-                print(f"⚠️  Windows input failed, falling back to standard input: {e}")
+                print(f"Warning: Windows input failed, falling back to standard input: {e}")
                 self.use_fallback = True
                 return input(prompt)
         else:
@@ -86,7 +86,7 @@ class WindowsInputHandler:
             try:
                 return self._windows_choice(prompt, valid_choices)
             except Exception as e:
-                print(f"⚠️  Windows choice input failed, falling back to standard input: {e}")
+                print(f"Warning: Windows choice input failed, falling back to standard input: {e}")
                 self.use_fallback = True
                 return self._standard_choice(prompt, valid_choices)
         else:
