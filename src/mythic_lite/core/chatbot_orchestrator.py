@@ -1,7 +1,8 @@
 """
 Main orchestrator module for Mythic-Lite chatbot system.
 
-Coordinates all workers and manages the main chatbot interface using the LLM abstraction layer.
+Coordinates all workers and manages the main chatbot interface.
+The orchestrator should only coordinate workers, not directly interact with LLMs.
 """
 
 import time
@@ -13,7 +14,7 @@ from typing import Optional, Any, Dict, List
 from .config import get_config
 from ..utils.logger import get_logger
 from ..utils.windows_input import safe_input, safe_choice
-from ..workers import ASRWorker, LLMWorker, MemoryWorker, TTSWorker
+from ..workers import ASRWorker, LLMWorker, MemoryWorker, TTSWorker, ConversationWorker
 
 
 class ChatbotOrchestrator:
@@ -28,9 +29,11 @@ class ChatbotOrchestrator:
         self.memory_worker = MemoryWorker(self.config)
         self.tts_worker = TTSWorker(self.config)
         self.asr_worker = ASRWorker(self.config)
+        self.conversation_worker = ConversationWorker(self.config)
         
-        # Set LLM worker reference in memory worker
+        # Set worker references
         self.memory_worker.set_llm_worker(self.llm_worker)
+        self.conversation_worker.set_workers(self.llm_worker, self.memory_worker)
         
         # Debug mode from configuration
         self.debug_mode = self.config.debug_mode
@@ -42,10 +45,6 @@ class ChatbotOrchestrator:
         
         # Track initialization status
         self._initialized = False
-        
-        # Conversation state
-        self.conversation_history = []
-        self.current_context = {}
         
         self.logger.info("ChatbotOrchestrator created (not yet initialized)")
     
@@ -74,6 +73,13 @@ class ChatbotOrchestrator:
                 self.logger.warning("Memory worker initialization failed - memory management will be limited")
             else:
                 self.logger.debug("Memory worker initialized successfully")
+            
+            # Initialize conversation worker
+            self.logger.debug("Initializing conversation worker...")
+            if not self.conversation_worker.initialize():
+                self.logger.critical("Failed to initialize conversation worker!")
+                return False
+            self.logger.debug("Conversation worker initialized successfully")
             
             # Initialize TTS worker
             self.logger.debug("Initializing TTS worker...")
@@ -111,46 +117,16 @@ class ChatbotOrchestrator:
             return False
     
     def process_user_input(self, user_input: str, use_audio: bool = False) -> str:
-        """Process user input and generate a response."""
+        """Process user input and generate a response through the conversation worker."""
         if not self._initialized:
             return "System not initialized. Please wait..."
         
         try:
-            # Add user input to conversation history
-            self.conversation_history.append({
-                'role': 'user',
-                'content': user_input,
-                'timestamp': time.time()
-            })
-            
-            # Recall relevant memories
-            relevant_memories = self.memory_worker.recall_relevant_memory(user_input)
-            
-            # Build context with memories
-            context = self._build_context(user_input, relevant_memories)
-            
-            # Generate response using LLM abstraction layer
-            response = self.llm_worker.generate_chat_response(
-                messages=self.conversation_history,
-                max_tokens=self.config.llm.max_tokens,
-                temperature=self.config.llm.temperature
-            )
-            
-            if not response:
-                response = "I apologize, but I'm having trouble generating a response right now."
-            
-            # Add AI response to conversation history
-            self.conversation_history.append({
-                'role': 'assistant',
-                'content': response,
-                'timestamp': time.time()
-            })
-            
-            # Store in memory
-            self.memory_worker.store_conversation_memory(user_input, response, context)
+            # Delegate to conversation worker
+            response = self.conversation_worker.process_user_input(user_input, use_audio)
             
             # Update conversation count
-            self.total_conversations += 1
+            self.total_conversations = self.conversation_worker.total_conversations
             
             # Generate audio if requested
             if use_audio and self.tts_worker.is_available():
@@ -166,48 +142,21 @@ class ChatbotOrchestrator:
             return f"I apologize, but I encountered an error: {str(e)}"
     
     def process_user_input_stream(self, user_input: str, use_audio: bool = False):
-        """Process user input with streaming response."""
+        """Process user input with streaming response through the conversation worker."""
         if not self._initialized:
             yield "System not initialized. Please wait..."
             return
         
         try:
-            # Add user input to conversation history
-            self.conversation_history.append({
-                'role': 'user',
-                'content': user_input,
-                'timestamp': time.time()
-            })
-            
-            # Recall relevant memories
-            relevant_memories = self.memory_worker.recall_relevant_memory(user_input)
-            
-            # Build context with memories
-            context = self._build_context(user_input, relevant_memories)
-            
-            # Generate streaming response using LLM abstraction layer
+            # Delegate to conversation worker
             accumulated_response = ""
             
-            for token, full_response in self.llm_worker.generate_chat_response_stream(
-                messages=self.conversation_history,
-                max_tokens=self.config.llm.max_tokens,
-                temperature=self.config.llm.temperature
-            ):
-                accumulated_response = full_response
+            for token in self.conversation_worker.process_user_input_stream(user_input, use_audio):
+                accumulated_response += token
                 yield token
             
-            # Add AI response to conversation history
-            self.conversation_history.append({
-                'role': 'assistant',
-                'content': accumulated_response,
-                'timestamp': time.time()
-            })
-            
-            # Store in memory
-            self.memory_worker.store_conversation_memory(user_input, accumulated_response, context)
-            
             # Update conversation count
-            self.total_conversations += 1
+            self.total_conversations = self.conversation_worker.total_conversations
             
             # Generate audio if requested
             if use_audio and self.tts_worker.is_available():
@@ -220,29 +169,12 @@ class ChatbotOrchestrator:
             self.logger.error(f"Failed to process user input stream: {e}")
             yield f"I apologize, but I encountered an error: {str(e)}"
     
-    def _build_context(self, user_input: str, relevant_memories: List[Dict]) -> Dict[str, Any]:
-        """Build context for the current conversation."""
-        context = {
-            'user_input': user_input,
-            'timestamp': time.time(),
-            'conversation_count': self.total_conversations,
-            'relevant_memories': relevant_memories
-        }
-        
-        # Add system context
-        if hasattr(self.config, 'system'):
-            context['system'] = {
-                'character': getattr(self.config.system, 'character', 'Mythic'),
-                'personality': getattr(self.config.system, 'personality', '19th century mercenary'),
-                'context': getattr(self.config.system, 'context', '')
-            }
-        
-        return context
-    
     def _handle_speech_input(self, transcription: str):
         """Handle speech input from ASR."""
         self.logger.info(f"Speech input: {transcription}")
-        # Process speech input (could be implemented based on your needs)
+        # Process speech input through conversation worker
+        response = self.process_user_input(transcription, use_audio=True)
+        self.logger.info(f"Response to speech: {response}")
     
     def _handle_partial_speech(self, partial: str):
         """Handle partial speech input from ASR."""
@@ -255,11 +187,12 @@ class ChatbotOrchestrator:
             'initialized': self._initialized,
             'llm_worker': self.llm_worker.get_status(),
             'memory_worker': self.memory_worker.get_status(),
+            'conversation_worker': self.conversation_worker.get_status(),
             'tts_worker': self.tts_worker.get_status(),
             'asr_worker': self.asr_worker.get_status(),
             'total_conversations': self.total_conversations,
             'uptime_hours': (time.time() - self.start_time) / 3600,
-            'conversation_history_length': len(self.conversation_history)
+            'conversation_history_length': len(self.conversation_worker.get_conversation_history())
         }
     
     def get_performance_stats(self) -> Dict[str, Any]:
@@ -280,6 +213,9 @@ class ChatbotOrchestrator:
         if self.memory_worker:
             stats['memory_stats'] = self.memory_worker.get_memory_stats()
         
+        if self.conversation_worker:
+            stats['conversation_stats'] = self.conversation_worker.get_performance_stats()
+        
         return stats
     
     def run_benchmark(self) -> Dict[str, Any]:
@@ -291,7 +227,7 @@ class ChatbotOrchestrator:
         start_time = time.time()
         
         try:
-            # Test basic response generation
+            # Test basic response generation through conversation worker
             test_input = "Hello, how are you today?"
             response = self.process_user_input(test_input)
             
@@ -323,6 +259,9 @@ class ChatbotOrchestrator:
             if self.memory_worker:
                 self.memory_worker.cleanup()
             
+            if self.conversation_worker:
+                self.conversation_worker.cleanup()
+            
             if self.tts_worker:
                 self.tts_worker.cleanup()
             
@@ -337,4 +276,4 @@ class ChatbotOrchestrator:
     
     def is_available(self) -> bool:
         """Check if the orchestrator is available for use."""
-        return self._initialized and self.llm_worker.is_available() 
+        return self._initialized and self.conversation_worker.is_available() 
