@@ -21,14 +21,12 @@ from ..utils.logger import get_logger
 class ASRWorker:
     """Worker for handling Automatic Speech Recognition tasks using vosk."""
     
-    def __init__(self):
+    def __init__(self, config: Optional[Any] = None):
         """Initialize the ASR worker."""
-        # Create a minimal config if none provided
-        self.config = type('Config', (), {
-            'asr': type('ASRConfig', (), {
-                'enable_asr': True
-            })()
-        })()
+        if config is None:
+            raise ValueError("ASR worker requires a configuration object. All config must come from the main config file.")
+        
+        self.config = config
         
         self.logger = get_logger(__name__)
         
