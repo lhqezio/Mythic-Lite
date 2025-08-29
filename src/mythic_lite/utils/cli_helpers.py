@@ -19,18 +19,25 @@ console = Console()
 
 def print_banner():
     """Print the Mythic-Lite banner."""
-    banner_text = Text()
-    banner_text.append("MYTHIC-LITE", style="magenta bold")
-    banner_text.append("\n", style="white")
-    banner_text.append("19th Century Mercenary AI Chatbot", style="cyan italic")
+    banner_text = []
+    banner_text.append("MYTHIC-LITE", style="bold magenta")
+    banner_text.append("Professional AI Chatbot System", style="cyan italic")
+    banner_text.append("Modular Architecture • LLM Abstraction • Character System", style="dim")
     
-    banner_panel = Panel(
-        banner_text,
-        border_style="magenta",
-        box=ROUNDED,
-        padding=(1, 2)
-    )
-    console.print(banner_panel)
+    # Create a centered banner
+    banner = "\n".join([
+        "╔══════════════════════════════════════════════════════════════╗",
+        "║                                                              ║",
+        "║                    MYTHIC-LITE                              ║",
+        "║              Professional AI Chatbot System                  ║",
+        "║         Modular Architecture • LLM Abstraction              ║",
+        "║                    • Character System                        ║",
+        "║                                                              ║",
+        "╚══════════════════════════════════════════════════════════════╝"
+    ])
+    
+    console.print(banner, style="bold cyan")
+    console.print()
 
 
 def print_help_table():

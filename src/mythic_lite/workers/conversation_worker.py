@@ -10,6 +10,7 @@ from typing import Optional, Dict, List, Generator, Any
 from pathlib import Path
 
 from ..core.llm import ChatMessage
+from ..core.character import get_character, CharacterConfig
 from ..utils.logger import get_logger, logged_operation
 
 
@@ -28,6 +29,10 @@ class ConversationWorker:
         self.llm_worker = None
         self.memory_worker = None
         
+        # Character configuration
+        self.character_config: Optional[CharacterConfig] = None
+        self._load_character_config()
+        
         # Conversation state
         self.conversation_history: List[Dict[str, Any]] = []
         self.current_context: Dict[str, Any] = {}
@@ -42,6 +47,23 @@ class ConversationWorker:
         self.initialization_error: Optional[str] = None
         
         self.logger.debug("Conversation worker initialized")
+    
+    def _load_character_config(self):
+        """Load character configuration if specified."""
+        if hasattr(self.config, 'conversation') and self.config.conversation.character_name:
+            character_name = self.config.conversation.character_name
+            self.character_config = get_character(character_name)
+            
+            if self.character_config:
+                self.logger.info(f"Loaded character: {character_name}")
+                # Update conversation config with character settings
+                self.config.conversation.system_prompt = self.character_config.get_system_prompt()
+                self.config.conversation.user_prefix = self.character_config.user_prefix
+                self.config.conversation.assistant_prefix = self.character_config.assistant_prefix
+            else:
+                self.logger.warning(f"Character not found: {character_name}")
+        else:
+            self.logger.debug("No character specified, using default configuration")
     
     def set_workers(self, llm_worker, memory_worker):
         """Set worker references from the orchestrator."""
@@ -193,13 +215,22 @@ class ConversationWorker:
             'conversation_history_length': len(self.conversation_history)
         }
         
-        # Add system context
-        if hasattr(self.config, 'system'):
-            context['system'] = {
-                'character': getattr(self.config.system, 'character', 'Mythic'),
-                'personality': getattr(self.config.system, 'personality', '19th century mercenary'),
-                'context': getattr(self.config.system, 'context', '')
+        # Add character context if available
+        if self.character_config:
+            context['character'] = {
+                'name': self.character_config.personality.name,
+                'description': self.character_config.personality.description,
+                'personality_traits': self.character_config.personality.personality_traits,
+                'interests': self.character_config.personality.interests
             }
+        else:
+            # Add system context
+            if hasattr(self.config, 'system'):
+                context['system'] = {
+                    'character': getattr(self.config.system, 'character', 'Assistant'),
+                    'personality': getattr(self.config.system, 'personality', 'Professional'),
+                    'context': getattr(self.config.system, 'context', '')
+                }
         
         # Add conversation configuration
         if hasattr(self.config, 'conversation'):

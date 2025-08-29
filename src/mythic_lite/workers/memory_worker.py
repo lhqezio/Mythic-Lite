@@ -102,7 +102,7 @@ class MemoryWorker:
                 summary_messages = [
                     {
                         "role": "system",
-                        "content": "You are Mythic, a 19th century mercenary. Summarize this conversation in your own voice, focusing on what the client asked and what you discussed. Be direct and practical. No meta-instructions or explanations about what you're doing."
+                        "content": "You are a helpful AI assistant. Summarize this conversation in a clear, concise way, focusing on what was discussed and any important points."
                     },
                     {
                         "role": "user",

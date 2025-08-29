@@ -18,11 +18,12 @@ console = Console()
 
 
 @click.command()
+@click.option('--character', '-c', default=None, help='Character to use (mythic, sage, or none for generic)')
 @click.option('--interactive', is_flag=True, help='Enable interactive mode')
 @click.option('--test-tts', is_flag=True, help='Test TTS system')
 @click.option('--debug', is_flag=True, help='Enable debug mode')
 @click.pass_context
-def chat(ctx, interactive: bool, test_tts: bool, debug: bool):
+def chat(ctx, character: Optional[str], interactive: bool, test_tts: bool, debug: bool):
     """Start a text-based chat with Mythic."""
     logger = ctx.obj['logger']
     
@@ -43,10 +44,35 @@ def chat(ctx, interactive: bool, test_tts: bool, debug: bool):
         
         orchestrator = create_orchestrator(debug_config)
         
+        # Set character if specified
+        if character:
+            if character.lower() == 'none':
+                orchestrator.config.conversation.character_name = None
+                orchestrator.config.conversation.system_prompt = "You are a helpful AI assistant. Be direct, practical, and maintain a professional tone."
+                orchestrator.config.conversation.user_prefix = "User: "
+                orchestrator.config.conversation.assistant_prefix = "Assistant: "
+                console.print("Using generic AI assistant", style="green")
+            else:
+                orchestrator.config.conversation.character_name = character.lower()
+                console.print(f"Using character: {character}", style="green")
+        
         # Initialize the system
         if initialize_system(orchestrator):
+            # Display character info
+            if orchestrator.config.conversation.character_name:
+                from mythic_lite.core import get_character
+                character_config = get_character(orchestrator.config.conversation.character_name)
+                if character_config:
+                    console.print(f"🤖 Character: {character_config.personality.name}", style="bold cyan")
+                    console.print(f"📝 Description: {character_config.personality.description}", style="cyan")
+                    console.print(f"🎭 Personality: {', '.join(character_config.personality.personality_traits[:3])}...", style="cyan")
+                else:
+                    console.print(f"⚠️ Character '{orchestrator.config.conversation.character_name}' not found, using generic assistant", style="yellow")
+            else:
+                console.print("🤖 Using generic AI assistant", style="cyan")
+            
             # Run in chat mode
-            console.print("Launching Mythic...", style="green")
+            console.print("Launching chat...", style="green")
             console.print("Starting text-based chat...", style="cyan")
             
             # Start the actual chat interface
@@ -56,7 +82,7 @@ def chat(ctx, interactive: bool, test_tts: bool, debug: bool):
             ctx.exit(1)
         
     except KeyboardInterrupt:
-        console.print("\nChat interrupted - Mythic returns to the shadows...", style="yellow")
+        console.print("\nChat interrupted - returning to main menu...", style="yellow")
     except Exception as e:
         console.print(f"Failed to start chat: {e}", style="red")
         ctx.exit(1)

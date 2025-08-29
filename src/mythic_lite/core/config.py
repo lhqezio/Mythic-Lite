@@ -105,11 +105,12 @@ class MemoryConfig:
 class ConversationConfig:
     """Conversation management configuration."""
     max_history_length: int = 50
-    system_prompt: str = "You are Mythic, a 19th century mercenary AI. Be direct, practical, and maintain your character."
+    system_prompt: str = "You are a helpful AI assistant. Be direct, practical, and maintain a professional tone."
     user_prefix: str = "User: "
-    assistant_prefix: str = "Mythic: "
+    assistant_prefix: str = "Assistant: "
     enable_streaming: bool = True
     timeout_seconds: int = 30
+    character_name: Optional[str] = None  # Character to use, if any
 
 
 @dataclass

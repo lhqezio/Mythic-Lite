@@ -24,9 +24,10 @@ console = Console()
 @click.option('--version', is_flag=True, help='Show version information')
 @click.pass_context
 def cli(ctx, debug: bool, no_colors: bool, version: bool):
-    """MYTHIC-LITE: 19th Century Mercenary AI Chatbot
+    """MYTHIC-LITE: Professional AI Chatbot System
     
-    Experience conversations with a fierce female warrior from the Victorian era.
+    A modular, enterprise-ready AI chatbot system with LLM abstraction,
+    intelligent conversation management, and a flexible character system.
     All processing happens locally on your device for complete privacy.
     """
     # Handle version flag

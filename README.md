@@ -1,11 +1,12 @@
 # Mythic-Lite
 
-A professional, enterprise-ready AI chatbot system with modular architecture, LLM abstraction, and intelligent conversation management.
+A professional, enterprise-ready AI chatbot system with modular architecture, LLM abstraction, intelligent conversation management, and a flexible character system.
 
 ## 🚀 Features
 
 - **Modular Architecture**: Clean separation of concerns with focused worker components
 - **LLM Abstraction**: Easy swapping of different language models without code changes
+- **Character System**: Flexible character definitions with personality management
 - **Intelligent Memory**: Persistent conversation memory with intelligent summarization
 - **Professional Logging**: Advanced logging system with performance monitoring
 - **Type Safety**: Comprehensive type hints and validation throughout
@@ -20,6 +21,8 @@ src/mythic_lite/
 ├── core/                    # Core system components
 │   ├── config.py           # Configuration management
 │   ├── chatbot_orchestrator.py  # Worker coordination
+│   ├── character.py         # Character system
+│   ├── demo_config.py       # Demo configurations
 │   └── llm/                # LLM abstraction layer
 │       ├── base.py         # Base LLM interface
 │       ├── llama_cpp.py    # LLaMA CPP implementation
@@ -79,6 +82,39 @@ if orchestrator.initialize_workers():
     print(response)
 ```
 
+### Character System
+
+```python
+from mythic_lite.core import (
+    ChatbotOrchestrator,
+    create_mythic_demo_config,
+    create_generic_config,
+    create_custom_character_config,
+    create_custom_character
+)
+
+# Use Mythic character (demo)
+config = create_mythic_demo_config()
+orchestrator = ChatbotOrchestrator(config)
+
+# Use generic assistant
+config = create_generic_config()
+orchestrator = ChatbotOrchestrator(config)
+
+# Create custom character
+custom_character = create_custom_character(
+    name="Sage",
+    description="A wise philosophical mentor",
+    personality_traits=["Wise", "Contemplative", "Patient"],
+    formality_level=8,
+    empathy_level=9
+)
+
+# Use custom character
+config = create_custom_character_config("sage")
+orchestrator = ChatbotOrchestrator(config)
+```
+
 ### Command Line Interface
 
 ```bash
@@ -95,27 +131,11 @@ python -m mythic_lite.utils.cli benchmark
 python -m mythic_lite.utils.cli config
 ```
 
-### Advanced Usage
+### Character Demo
 
-```python
-# Custom configuration
-from mythic_lite.core import Config, LLMConfig, ModelType
-
-config = Config()
-config.llm = LLMConfig(
-    model_type=ModelType.LLAMA_CPP,
-    model_path="path/to/model.gguf",
-    max_tokens=200,
-    temperature=0.8
-)
-
-# Initialize with custom config
-orchestrator = ChatbotOrchestrator(config)
-orchestrator.initialize_workers()
-
-# Streaming response
-for token in orchestrator.process_user_input_stream("Tell me a story"):
-    print(token, end='', flush=True)
+```bash
+# Run character system demo
+python examples/character_demo.py
 ```
 
 ## ⚙️ Configuration
@@ -137,8 +157,9 @@ config = {
         "memory_ttl_hours": 168  # 1 week
     },
     "conversation": {
-        "system_prompt": "You are Mythic, a 19th century mercenary AI...",
-        "max_history_length": 50
+        "character_name": "mythic",  # Character to use
+        "max_history_length": 50,
+        "enable_streaming": True
     },
     "system": {
         "debug_mode": False,
@@ -158,6 +179,57 @@ export MYTHIC_DEBUG=1
 
 # Set data directory
 export MYTHIC_DATA_DIR="/path/to/data"
+```
+
+## 🎭 Character System
+
+The system includes a flexible character system that allows you to:
+
+### Built-in Characters
+
+- **Mythic**: A 19th century mercenary AI (demo character)
+- **Generic Assistant**: Standard AI assistant
+
+### Custom Characters
+
+```python
+from mythic_lite.core import create_custom_character, CharacterManager
+
+# Create a custom character
+character_manager = CharacterManager()
+custom_character = character_manager.create_custom_character(
+    name="Sage",
+    description="A wise philosophical mentor",
+    personality_traits=["Wise", "Contemplative", "Patient"],
+    speech_patterns=["Uses metaphors", "Speaks thoughtfully"],
+    interests=["Philosophy", "Personal growth"],
+    formality_level=8,
+    empathy_level=9
+)
+
+# Add to character manager
+character_manager.add_character("sage", custom_character)
+```
+
+### Character Configuration
+
+```python
+# Character personality traits
+personality = CharacterPersonality(
+    name="Your Character",
+    description="Character description",
+    background="Character background story",
+    personality_traits=["Trait 1", "Trait 2"],
+    speech_patterns=["Pattern 1", "Pattern 2"],
+    interests=["Interest 1", "Interest 2"],
+    formality_level=5,      # 1-10 scale
+    humor_level=5,          # 1-10 scale
+    assertiveness=7,        # 1-10 scale
+    empathy_level=6,        # 1-10 scale
+    greeting_style="direct",
+    farewell_style="practical",
+    question_style="straightforward"
+)
 ```
 
 ## 🔧 LLM Abstraction
@@ -224,6 +296,14 @@ python -m pytest --cov=src/mythic_lite tests/
 - **`BaseLLM`**: Abstract base class for language models
 - **`LLMFactory`**: Factory for creating model instances
 
+### Character System
+
+- **`CharacterConfig`**: Character configuration and settings
+- **`CharacterPersonality`**: Character personality traits
+- **`CharacterManager`**: Manager for character configurations
+- **`get_character()`**: Get character by name
+- **`create_custom_character()`**: Create custom character
+
 ### Workers
 
 - **`LLMWorker`**: Handles language model operations
@@ -274,3 +354,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Built with modern Python best practices
 - Inspired by professional chatbot architectures
 - Designed for enterprise-grade reliability and performance
+- Character system designed for flexibility and extensibility

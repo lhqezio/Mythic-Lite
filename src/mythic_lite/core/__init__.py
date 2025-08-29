@@ -39,6 +39,16 @@ from .llm.factory import (
     get_available_models
 )
 
+from .character import (
+    CharacterConfig,
+    CharacterPersonality,
+    CharacterType,
+    CharacterManager,
+    get_character_manager,
+    get_character,
+    create_custom_character
+)
+
 __all__ = [
     # Configuration
     'get_config',
@@ -71,5 +81,14 @@ __all__ = [
     'create_model',
     'create_llama_cpp_model',
     'validate_config',
-    'get_available_models'
+    'get_available_models',
+    
+    # Character System
+    'CharacterConfig',
+    'CharacterPersonality',
+    'CharacterType',
+    'CharacterManager',
+    'get_character_manager',
+    'get_character',
+    'create_custom_character'
 ]
