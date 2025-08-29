@@ -1,7 +1,8 @@
 """
 Workers module for Mythic-Lite chatbot system.
 
-Provides worker classes for different system components.
+Provides worker classes for different system components with clean interfaces
+and performance monitoring.
 """
 
 from .llm_worker import LLMWorker

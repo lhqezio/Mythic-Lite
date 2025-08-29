@@ -1,430 +1,270 @@
 """
-Advanced logging module for Mythic-Lite chatbot system.
-Provides structured logging with rich console output and file logging capabilities.
+Logging system for Mythic-Lite chatbot system.
+
+Provides a centralized logging system with consistent formatting,
+file rotation, and performance monitoring.
 """
 
-import sys
 import logging
+import logging.handlers
+import sys
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any
-from datetime import datetime
+from contextlib import contextmanager
 
-# Use lazy imports to avoid circular dependencies
-def get_rich_modules():
-    """Get rich modules when needed."""
-    from rich.console import Console
-    from rich.logging import RichHandler
-    from rich.theme import Theme
-    from rich.panel import Panel
-    from rich.text import Text
-    from rich.progress import Progress, SpinnerColumn, TextColumn
-    from rich.table import Table
-    from rich import print as rprint
-    return Console, RichHandler, Theme, Panel, Text, Progress, SpinnerColumn, TextColumn, Table, rprint
+from ..core.config import get_config, LogLevel
 
 
-class MythicLogger:
-    """Advanced logger class with rich console output and structured logging."""
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter with color support for console output."""
     
-    def __init__(self, name: str = "mythic", config: Optional[Any] = None):
-        self.name = name
-        self.config = config
-        self.console = None
-        self.logger = None
-        self.progress = None
+    # ANSI color codes
+    COLORS = {
+        'DEBUG': '\033[36m',      # Cyan
+        'INFO': '\033[32m',       # Green
+        'WARNING': '\033[33m',    # Yellow
+        'ERROR': '\033[31m',      # Red
+        'CRITICAL': '\033[35m',   # Magenta
+        'RESET': '\033[0m'        # Reset
+    }
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """Format log record with colors."""
+        # Add color to level name
+        if hasattr(record, 'levelname') and record.levelname in self.COLORS:
+            record.levelname = f"{self.COLORS[record.levelname]}{record.levelname}{self.COLORS['RESET']}"
         
-        self._setup_console()
-        self._setup_logging()
+        return super().format(record)
+
+
+class PerformanceLogger:
+    """Performance monitoring logger."""
     
-    def _setup_console(self):
-        """Setup rich console with custom theme."""
+    def __init__(self, logger: logging.Logger):
+        self.logger = logger
+        self.start_times: Dict[str, float] = {}
+    
+    def start_timer(self, operation: str) -> None:
+        """Start timing an operation."""
+        self.start_times[operation] = time.time()
+    
+    def end_timer(self, operation: str, success: bool = True) -> float:
+        """End timing an operation and log the result."""
+        if operation not in self.start_times:
+            self.logger.warning(f"Timer for '{operation}' was not started")
+            return 0.0
+        
+        duration = time.time() - self.start_times[operation]
+        status = "SUCCESS" if success else "FAILED"
+        
+        self.logger.info(f"Operation '{operation}' completed in {duration:.3f}s ({status})")
+        del self.start_times[operation]
+        
+        return duration
+    
+    @contextmanager
+    def timer(self, operation: str):
+        """Context manager for timing operations."""
+        self.start_timer(operation)
         try:
-            # Get rich modules when needed
-            Console, RichHandler, Theme, Panel, Text, Progress, SpinnerColumn, TextColumn, Table, rprint = get_rich_modules()
-            
-            # Custom theme for Mythic
-            mythic_theme = Theme({
-                "info": "cyan",
-                "warning": "yellow",
-                "error": "red",
-                "critical": "red bold",
-                "success": "green",
-                "mythic": "magenta bold",
-                "user": "blue",
-                "system": "dim white",
-                "debug": "dim cyan"
-            })
-            
-            self.console = Console(theme=mythic_theme, width=100)
-            
-            # Disable colors if configured
-            if self.config and hasattr(self.config, 'ui') and hasattr(self.config.ui, 'enable_colors'):
-                if not self.config.ui.enable_colors:
-                    self.console.no_color = True
-                    
-        except ImportError:
-            # Fallback to basic console if rich is not available
-            self.console = None
+            yield
+            self.end_timer(operation, success=True)
+        except Exception as e:
+            self.end_timer(operation, success=False)
+            raise
+
+
+class LoggerManager:
+    """Centralized logger management system."""
     
-    def _setup_logging(self):
-        """Setup logging with rich handlers."""
-        # Create logger
-        self.logger = logging.getLogger(self.name)
-        
-        # Set log level based on config or default to INFO
-        if self.config and hasattr(self.config, 'logging') and hasattr(self.config.logging, 'level'):
-            self.logger.setLevel(getattr(logging, self.config.logging.level.upper()))
-        else:
-            self.logger.setLevel(logging.INFO)
-        
-        # Clear any existing handlers
-        self.logger.handlers.clear()
-        
-        # Only setup rich handler if available, otherwise use basic console handler
-        if self.console:
-            try:
-                Console, RichHandler, Theme, Panel, Text, Progress, SpinnerColumn, TextColumn, Table, rprint = get_rich_modules()
-                
-                rich_handler = RichHandler(
-                    console=self.console,
-                    show_time=True,
-                    show_path=False,
-                    markup=True,
-                    rich_tracebacks=True
-                )
-                rich_handler.setLevel(self.logger.level)  # Use same level as logger
-                
-                # Create formatter for rich handler
-                rich_formatter = logging.Formatter(
-                    '%(message)s'
-                )
-                rich_handler.setFormatter(rich_formatter)
-                self.logger.addHandler(rich_handler)
-                
-            except Exception:
-                # Fallback to basic console handler if rich setup fails
-                self._setup_basic_handler()
-        else:
-            # Use basic console handler if rich is not available
-            self._setup_basic_handler()
+    def __init__(self):
+        self.loggers: Dict[str, logging.Logger] = {}
+        self.performance_loggers: Dict[str, PerformanceLogger] = {}
+        self._setup_root_logger()
     
-    def _setup_basic_handler(self):
-        """Setup basic console handler for logging."""
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(self.logger.level)  # Use same level as logger
+    def _setup_root_logger(self) -> None:
+        """Setup the root logger with default configuration."""
+        config = get_config()
         
-        # Create formatter
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        # Configure root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(getattr(logging, config.logging.level.value))
+        
+        # Clear existing handlers
+        root_logger.handlers.clear()
+        
+        # Add console handler
+        if config.logging.console_output:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_formatter = ColoredFormatter(config.logging.format)
+            console_handler.setFormatter(console_formatter)
+            root_logger.addHandler(console_handler)
+        
+        # Add file handler
+        if config.logging.file_output and config.logging.file_path:
+            self._setup_file_handler(root_logger, config)
+    
+    def _setup_file_handler(self, logger: logging.Logger, config: Any) -> None:
+        """Setup file handler with rotation."""
+        log_file = Path(config.logging.file_path)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Create rotating file handler
+        file_handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=config.logging.max_file_size,
+            backupCount=config.logging.backup_count
         )
-        console_handler.setFormatter(formatter)
-        self.logger.addHandler(console_handler)
-    
-    def info(self, message: str, **kwargs):
-        """Log info message."""
-        self.logger.info(message)
-    
-    def warning(self, message: str, **kwargs):
-        """Log warning message."""
-        self.logger.warning(message)
-    
-    def error(self, message: str, **kwargs):
-        """Log error message."""
-        self.logger.error(message)
-    
-    def critical(self, message: str, **kwargs):
-        """Log critical message."""
-        self.logger.critical(message)
-    
-    def debug(self, message: str, **kwargs):
-        """Log debug message."""
-        self.logger.debug(message)
-    
-    def success(self, message: str, **kwargs):
-        """Log success message with custom styling."""
-        if self.console:
-            try:
-                self.console.print(f"[SUCCESS] {message}", style="bold green", **kwargs)
-            except:
-                self.logger.info(f"[SUCCESS] {message}")
-        else:
-            self.logger.info(f"[SUCCESS] {message}")
-    
-    def mythic_speak(self, message: str, **kwargs):
-        """Log Mythic's speech with special styling."""
-        if self.console:
-            try:
-                self.console.print(f"Mythic: {message}", style="bold magenta", **kwargs)
-            except:
-                self.logger.info(f"Mythic: {message}")
-        else:
-            self.logger.info(f"Mythic: {message}")
-    
-    def user_speak(self, message: str, **kwargs):
-        """Log user's speech with special styling."""
-        if self.console:
-            try:
-                self.console.print(f"You: {message}", style="bold blue", **kwargs)
-            except:
-                self.logger.info(f"You: {message}")
-        else:
-            self.logger.info(f"You: {message}")
-    
-    def system_info(self, message: str, **kwargs):
-        """Log system information with special styling."""
-        if self.console:
-            try:
-                self.console.print(f"[INFO] {message}", style="bold cyan", **kwargs)
-            except:
-                self.logger.info(f"[INFO] {message}")
-        else:
-            self.logger.info(f"[INFO] {message}")
-    
-    def print_panel(self, content: str, title: str = "", style: str = "blue"):
-        """Print content in a rich panel."""
-        if self.console:
-            try:
-                Console, RichHandler, Theme, Panel, Text, Progress, SpinnerColumn, TextColumn, Table, rprint = get_rich_modules()
-                self.console.print(Panel(content, title=title, style=style))
-            except:
-                print(f"=== {title} ===")
-                print(content)
-                print("=" * (len(title) + 8))
-        else:
-            print(f"=== {title} ===")
-            print(content)
-            print("=" * (len(title) + 8))
-    
-    def print_table(self, data: Dict[str, Any], title: str = ""):
-        """Print data in a rich table."""
-        if self.console:
-            try:
-                Console, RichHandler, Theme, Panel, Text, Progress, SpinnerColumn, TextColumn, Table, rprint = get_rich_modules()
-                table = Table(title=title, show_header=True, header_style="bold magenta")
-                
-                for key, value in data.items():
-                    table.add_column(key, style="cyan")
-                    table.add_column(str(value), style="white")
-                
-                self.console.print(table)
-            except:
-                self._print_simple_table(data, title)
-        else:
-            self._print_simple_table(data, title)
-    
-    def _print_simple_table(self, data: Dict[str, Any], title: str = ""):
-        """Print data in a simple table format."""
-        if title:
-            print(f"\n{title}")
-            print("-" * len(title))
         
-        for key, value in data.items():
-            print(f"{key}: {value}")
+        # Use standard formatter for file output
+        file_formatter = logging.Formatter(config.logging.format)
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
     
-    def start_progress(self, description: str = "Processing..."):
-        """Start a progress indicator."""
-        # Disabled to avoid Task-related issues
-        return None
+    def get_logger(self, name: str) -> logging.Logger:
+        """Get or create a logger with the specified name."""
+        if name not in self.loggers:
+            logger = logging.getLogger(name)
+            self.loggers[name] = logger
+            
+            # Create performance logger
+            self.performance_loggers[name] = PerformanceLogger(logger)
+        
+        return self.loggers[name]
     
-    def update_progress(self, description: str = None):
-        """Update progress description."""
-        # Disabled to avoid Task-related issues
-        pass
+    def get_performance_logger(self, name: str) -> PerformanceLogger:
+        """Get performance logger for the specified name."""
+        if name not in self.performance_loggers:
+            self.get_logger(name)  # This will create both loggers
+        
+        return self.performance_loggers[name]
     
-    def stop_progress(self):
-        """Stop the progress indicator."""
-        # Disabled to avoid Task-related issues
-        pass
+    def set_level(self, level: LogLevel) -> None:
+        """Set logging level for all loggers."""
+        for logger in self.loggers.values():
+            logger.setLevel(getattr(logging, level.value))
+        
+        # Also set root logger level
+        logging.getLogger().setLevel(getattr(logging, level.value))
     
-    def show_speech_status(self, status: str, end: str = "\n"):
-        """Show speech status with appropriate emoji and styling."""
-        if self.console:
-            try:
-                # Clear any existing status first
-                self.clear_line()
-                
-                if status == "listening":
-                    self.console.print("Listening...", style="bold cyan", end=end)
-                elif status == "thinking":
-                    self.console.print("🤔 Thinking...", style="blue", end=end)
-                elif status == "processing":
-                    self.console.print("🔄 Processing...", style="yellow", end=end)
-                elif status == "complete":
-                    self.console.print("✅ Complete", style="green", end=end)
-                elif status == "error":
-                    self.console.print("❌ Error", style="red", end=end)
-                else:
-                    self.console.print(f"{status}", end=end)
-            except:
-                print(f"{status}", end=end)
-        else:
-            print(f"{status}", end=end)
-    
-    def clear_line(self):
-        """Clear the current line for clean updates."""
-        if self.console:
-            try:
-                # Use carriage return to go back to start of line
-                self.console.print("\r", end="")
-                # Clear the entire line with spaces
-                self.console.print(" " * 100, end="\r")
-            except:
-                pass
-    
-    def update_speech_status(self, status: str):
-        """Update speech status without newline - for real-time updates."""
-        if self.console:
-            try:
-                # Clear current line and show new status
-                self.clear_line()
-                self.show_speech_status(status, end="")
-                # Force flush to ensure immediate display
-                self.console.file.flush()
-            except:
-                pass
-    
-    def print_banner(self):
-        """Print the Mythic banner."""
-        if self.console:
-            try:
-                Console, RichHandler, Theme, Panel, Text, Progress, SpinnerColumn, TextColumn, Table, rprint = get_rich_modules()
-                banner = """
- ╔══════════════════════════════════════════════════════════════╗
- ║                    MYTHIC - 19th Century Mercenary          ║
- ║                                                              ║
- ║  A fierce female warrior from the Victorian era stands      ║
- ║  before you, ready for adventure and conversation.          ║
- ╚══════════════════════════════════════════════════════════════╝
-                """
-                self.console.print(Panel(banner, style="bold magenta"))
-            except:
-                self._print_simple_banner()
-        else:
-            self._print_simple_banner()
-    
-    def _print_simple_banner(self):
-        """Print a simple banner without rich formatting."""
-        print("""
- ╔══════════════════════════════════════════════════════════════╗
- ║                    MYTHIC - 19th Century Mercenary          ║
- ║                                                              ║
- ║  A fierce female warrior from the Victorian era stands      ║
- ║  before you, ready for adventure and conversation.          ║
- ╚══════════════════════════════════════════════════════════════╝
-        """)
-    
-    def print_help(self):
-        """Print help information."""
-        if self.console:
-            try:
-                Console, RichHandler, Theme, Panel, Text, Progress, SpinnerColumn, TextColumn, Table, rprint = get_rich_modules()
-                help_text = """
-Available Commands:
-• debug - Access troubleshooting and debug options
-• status - Show system and model status
-• quit or exit - Exit the chatbot
-• help - Show this help message
-
-Special Features:
-• Automatic text-to-speech with streaming
-• Intelligent memory management
-• Context-aware conversations
-• Victorian-era personality
-                """
-                self.console.print(Panel(help_text, title="Help", style="blue"))
-            except:
-                self._print_simple_help()
-        else:
-            self._print_simple_help()
-    
-    def _print_simple_help(self):
-        """Print simple help without rich formatting."""
-        print("""
-Available Commands:
-• debug - Access troubleshooting and debug options
-• status - Show system and model status
-• quit or exit - Exit the chatbot
-• help - Show this help message
-
-Special Features:
-• Automatic text-to-speech with streaming
-• Intelligent memory management
-• Context-aware conversations
-• Victorian-era personality
-        """)
-    
-    def log_configuration(self):
-        """Log the current configuration."""
-        if self.config and hasattr(self.config, 'to_dict'):
-            try:
-                config_dict = self.config.to_dict()
-                self.info("Configuration loaded")
-                
-                if self.config.debug_mode:
-                    self.print_table(config_dict, "Current Configuration")
-            except:
-                self.info("Configuration loaded (could not display details)")
-        else:
-            self.info("Configuration loaded (no config object)")
-    
-    def log_error_with_context(self, error: Exception, context: str = "", **kwargs):
-        """Log error with additional context."""
-        error_info = {
-            "error_type": type(error).__name__,
-            "error_message": str(error),
-            "context": context,
-            **kwargs
+    def get_logger_stats(self) -> Dict[str, Any]:
+        """Get statistics about loggers."""
+        stats = {
+            'total_loggers': len(self.loggers),
+            'logger_names': list(self.loggers.keys()),
+            'performance_loggers': len(self.performance_loggers)
         }
-        self.error(f"Error occurred: {error}")
         
-        if self.config and hasattr(self.config, 'debug_mode') and self.config.debug_mode:
-            if self.console:
-                try:
-                    self.console.print_exception()
-                except:
-                    pass
+        # Add handler information
+        root_logger = logging.getLogger()
+        stats['root_handlers'] = len(root_logger.handlers)
+        stats['root_level'] = root_logger.level
+        
+        return stats
 
 
-# Global logger instance and debug mode
-_logger = None
-_global_debug_config = None
-
-def get_logger(name: str = "mythic") -> MythicLogger:
-    """Get or create a logger instance."""
-    global _logger, _global_debug_config
-    if _logger is None:
-        _logger = MythicLogger(name, _global_debug_config)
-    return _logger
+# Global logger manager instance
+_logger_manager: Optional[LoggerManager] = None
 
 
-def setup_logging(name: str = "mythic", config: Optional[Any] = None) -> MythicLogger:
-    """Setup and return a logger instance."""
-    global _logger, _global_debug_config
-    _global_debug_config = config  # Store globally for other loggers
-    _logger = MythicLogger(name, config)
-    return _logger
+def get_logger_manager() -> LoggerManager:
+    """Get the global logger manager instance."""
+    global _logger_manager
+    
+    if _logger_manager is None:
+        _logger_manager = LoggerManager()
+    
+    return _logger_manager
 
 
-# Convenience functions for quick logging
-def log_info(message: str, **kwargs):
-    """Quick info logging."""
-    get_logger().info(message, **kwargs)
+def get_logger(name: str) -> logging.Logger:
+    """Get a logger with the specified name."""
+    return get_logger_manager().get_logger(name)
 
 
-def log_warning(message: str, **kwargs):
-    """Quick warning logging."""
-    get_logger().warning(message, **kwargs)
+def get_performance_logger(name: str) -> PerformanceLogger:
+    """Get a performance logger with the specified name."""
+    return get_logger_manager().get_performance_logger(name)
 
 
-def log_error(message: str, **kwargs):
-    """Quick error logging."""
-    get_logger().error(message, **kwargs)
+def set_log_level(level: LogLevel) -> None:
+    """Set the logging level for all loggers."""
+    get_logger_manager().set_level(level)
 
 
-def log_debug(message: str, **kwargs):
-    """Quick debug logging."""
-    get_logger().debug(message, **kwargs)
+def get_logger_stats() -> Dict[str, Any]:
+    """Get statistics about the logging system."""
+    return get_logger_manager().get_logger_stats()
 
 
-# Backward compatibility
-Logger = MythicLogger
+# Convenience functions for common logging patterns
+def log_function_entry(logger: logging.Logger, function_name: str, **kwargs) -> None:
+    """Log function entry with parameters."""
+    params = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
+    logger.debug(f"Entering {function_name}({params})")
+
+
+def log_function_exit(logger: logging.Logger, function_name: str, result: Any = None) -> None:
+    """Log function exit with result."""
+    if result is not None:
+        logger.debug(f"Exiting {function_name} -> {result}")
+    else:
+        logger.debug(f"Exiting {function_name}")
+
+
+def log_error_with_context(logger: logging.Logger, error: Exception, context: str = "") -> None:
+    """Log error with additional context."""
+    error_msg = f"Error in {context}: {str(error)}" if context else str(error)
+    logger.error(error_msg, exc_info=True)
+
+
+def log_performance_metric(logger: logging.Logger, operation: str, duration: float, 
+                          success: bool = True, **kwargs) -> None:
+    """Log performance metrics."""
+    status = "SUCCESS" if success else "FAILED"
+    extra_info = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
+    
+    if extra_info:
+        logger.info(f"Performance: {operation} completed in {duration:.3f}s ({status}) - {extra_info}")
+    else:
+        logger.info(f"Performance: {operation} completed in {duration:.3f}s ({status})")
+
+
+# Context manager for automatic logging
+@contextmanager
+def logged_operation(logger: logging.Logger, operation_name: str, **kwargs):
+    """Context manager for logging operations with timing."""
+    perf_logger = get_performance_logger(logger.name)
+    
+    with perf_logger.timer(operation_name):
+        try:
+            log_function_entry(logger, operation_name, **kwargs)
+            yield
+            log_function_exit(logger, operation_name)
+        except Exception as e:
+            log_error_with_context(logger, e, operation_name)
+            raise
+
+
+# Initialize default loggers
+def initialize_logging() -> None:
+    """Initialize the logging system."""
+    config = get_config()
+    
+    # Create logger manager
+    manager = get_logger_manager()
+    
+    # Set initial log level
+    manager.set_level(config.logging.level)
+    
+    # Log initialization
+    logger = get_logger("logging-system")
+    logger.info("Logging system initialized")
+    logger.debug(f"Log level: {config.logging.level.value}")
+    logger.debug(f"Console output: {config.logging.console_output}")
+    logger.debug(f"File output: {config.logging.file_output}")
+
+
+# Auto-initialize logging when module is imported
+initialize_logging()

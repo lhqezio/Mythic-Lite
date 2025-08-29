@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, Generator, Union
 from dataclasses import dataclass
 from enum import Enum
+import time
 
 
 class ModelType(Enum):
@@ -22,6 +23,8 @@ class ModelType(Enum):
 @dataclass
 class LLMConfig:
     """Configuration for language models."""
+    
+    # Model identification
     model_type: ModelType
     model_path: Optional[str] = None
     model_repo: Optional[str] = None
@@ -44,32 +47,131 @@ class LLMConfig:
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     api_version: Optional[str] = None
+    
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        self._validate_config()
+    
+    def _validate_config(self):
+        """Validate configuration parameters."""
+        if self.max_tokens <= 0:
+            raise ValueError("max_tokens must be positive")
+        
+        if not 0.0 <= self.temperature <= 2.0:
+            raise ValueError("temperature must be between 0.0 and 2.0")
+        
+        if self.context_window <= 0:
+            raise ValueError("context_window must be positive")
+        
+        if not 0.0 <= self.top_p <= 1.0:
+            raise ValueError("top_p must be between 0.0 and 1.0")
+        
+        if self.top_k <= 0:
+            raise ValueError("top_k must be positive")
+        
+        if self.repeat_penalty <= 0.0:
+            raise ValueError("repeat_penalty must be positive")
+        
+        if self.n_threads <= 0:
+            raise ValueError("n_threads must be positive")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary."""
+        return {
+            'model_type': self.model_type.value,
+            'model_path': self.model_path,
+            'model_repo': self.model_repo,
+            'model_filename': self.model_filename,
+            'max_tokens': self.max_tokens,
+            'temperature': self.temperature,
+            'context_window': self.context_window,
+            'top_p': self.top_p,
+            'top_k': self.top_k,
+            'repeat_penalty': self.repeat_penalty,
+            'n_gpu_layers': self.n_gpu_layers,
+            'n_threads': self.n_threads,
+            'verbose': self.verbose,
+            'api_key': self.api_key,
+            'api_base': self.api_base,
+            'api_version': self.api_version
+        }
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "LLMConfig":
+        """Create configuration from dictionary."""
+        # Convert string back to enum
+        if 'model_type' in config_dict:
+            config_dict['model_type'] = ModelType(config_dict['model_type'])
+        
+        return cls(**config_dict)
 
 
 @dataclass
 class LLMResponse:
     """Standardized response from language models."""
+    
     text: str
     tokens_generated: int
     response_time: float
     model_name: str
     finish_reason: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    
+    def __post_init__(self):
+        """Validate response after initialization."""
+        if self.tokens_generated < 0:
+            raise ValueError("tokens_generated cannot be negative")
+        
+        if self.response_time < 0:
+            raise ValueError("response_time cannot be negative")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert response to dictionary."""
+        return {
+            'text': self.text,
+            'tokens_generated': self.tokens_generated,
+            'response_time': self.response_time,
+            'model_name': self.model_name,
+            'finish_reason': self.finish_reason,
+            'metadata': self.metadata
+        }
 
 
 @dataclass
 class ChatMessage:
     """Standardized chat message format."""
+    
     role: str  # "system", "user", "assistant"
     content: str
     timestamp: Optional[float] = None
     metadata: Optional[Dict[str, Any]] = None
+    
+    def __post_init__(self):
+        """Validate message after initialization."""
+        if self.role not in ["system", "user", "assistant"]:
+            raise ValueError("role must be 'system', 'user', or 'assistant'")
+        
+        if not self.content:
+            raise ValueError("content cannot be empty")
+        
+        if self.timestamp is None:
+            self.timestamp = time.time()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert message to dictionary."""
+        return {
+            'role': self.role,
+            'content': self.content,
+            'timestamp': self.timestamp,
+            'metadata': self.metadata
+        }
 
 
 class BaseLLM(ABC):
     """Abstract base class for all language model implementations."""
     
     def __init__(self, config: LLMConfig):
+        """Initialize the language model with configuration."""
         self.config = config
         self.model_name = self._get_model_name()
         self.is_initialized = False
@@ -79,6 +181,7 @@ class BaseLLM(ABC):
         self.total_requests = 0
         self.total_tokens_generated = 0
         self.average_response_time = 0.0
+        self.total_response_time = 0.0
     
     @abstractmethod
     def initialize(self) -> bool:
@@ -142,14 +245,10 @@ class BaseLLM(ABC):
         """Update performance tracking metrics."""
         self.total_requests += 1
         self.total_tokens_generated += tokens
+        self.total_response_time += response_time
         
-        if self.total_requests == 1:
-            self.average_response_time = response_time
-        else:
-            self.average_response_time = (
-                (self.average_response_time * (self.total_requests - 1) + response_time) 
-                / self.total_requests
-            )
+        # Calculate running average
+        self.average_response_time = self.total_response_time / self.total_requests
     
     def get_status(self) -> Dict[str, Any]:
         """Get the current status of the LLM."""
@@ -174,9 +273,10 @@ class BaseLLM(ABC):
             'total_requests': self.total_requests,
             'total_tokens_generated': self.total_tokens_generated,
             'average_response_time': self.average_response_time,
+            'total_response_time': self.total_response_time,
             'tokens_per_second': (
-                self.total_tokens_generated / self.average_response_time 
-                if self.average_response_time > 0 else 0
+                self.total_tokens_generated / self.total_response_time 
+                if self.total_response_time > 0 else 0
             )
         }
     
@@ -194,7 +294,8 @@ class BaseLLM(ABC):
         validation = {
             'valid': True,
             'errors': [],
-            'warnings': []
+            'warnings': [],
+            'model_type': self.config.model_type.value
         }
         
         # Check required fields based on model type
@@ -216,3 +317,10 @@ class BaseLLM(ABC):
             validation['valid'] = False
         
         return validation
+    
+    def reset_performance_metrics(self):
+        """Reset performance tracking metrics."""
+        self.total_requests = 0
+        self.total_tokens_generated = 0
+        self.average_response_time = 0.0
+        self.total_response_time = 0.0

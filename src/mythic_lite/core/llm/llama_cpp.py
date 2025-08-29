@@ -2,7 +2,7 @@
 LLaMA CPP implementation for Mythic-Lite chatbot system.
 
 Provides a concrete implementation of the BaseLLM interface
-for LLaMA CPP models.
+for LLaMA CPP models with optimized performance and error handling.
 """
 
 import time
@@ -15,7 +15,7 @@ try:
     LLAMA_CPP_AVAILABLE = True
 except ImportError:
     LLAMA_CPP_AVAILABLE = False
-    # Mock class for testing
+    # Mock class for testing when llama-cpp-python is not available
     class Llama:
         def __init__(self, **kwargs):
             pass
@@ -48,11 +48,12 @@ from ...utils.logger import get_logger
 
 
 class LlamaCPPModel(BaseLLM):
-    """LLaMA CPP model implementation."""
+    """LLaMA CPP model implementation with optimized performance."""
     
     def __init__(self, config: LLMConfig):
+        """Initialize LLaMA CPP model with configuration."""
         if not LLAMA_CPP_AVAILABLE:
-            raise ImportError("llama-cpp-python is not available")
+            raise ImportError("llama-cpp-python is not available. Please install it with: pip install llama-cpp-python")
         
         super().__init__(config)
         self.logger = get_logger("llama-cpp-model")
@@ -61,6 +62,9 @@ class LlamaCPPModel(BaseLLM):
         # Validate config
         if config.model_type != ModelType.LLAMA_CPP:
             raise ValueError("Config must be for LLaMA CPP model type")
+        
+        # Thread safety
+        self._model_lock = threading.RLock()
     
     def initialize(self) -> bool:
         """Initialize the LLaMA CPP model."""
@@ -70,24 +74,30 @@ class LlamaCPPModel(BaseLLM):
             # Determine model path
             model_path = self._get_model_path()
             if not model_path or not model_path.exists():
-                raise Exception(f"Model file not found: {model_path}")
+                raise FileNotFoundError(f"Model file not found: {model_path}")
             
-            # Initialize LLaMA model
-            self.model = Llama(
-                model_path=str(model_path),
-                n_ctx=self.config.context_window,
-                n_gpu_layers=self.config.n_gpu_layers,
-                n_threads=self.config.n_threads,
-                verbose=self.config.verbose,
-                logits_all=False,
-                embedding=False
-            )
+            # Initialize LLaMA model with optimized settings
+            with self._model_lock:
+                self.model = Llama(
+                    model_path=str(model_path),
+                    n_ctx=self.config.context_window,
+                    n_gpu_layers=self.config.n_gpu_layers,
+                    n_threads=self.config.n_threads,
+                    verbose=self.config.verbose,
+                    logits_all=False,
+                    embedding=False,
+                    use_mmap=True,
+                    use_mlock=False,
+                    seed=-1  # Random seed
+                )
             
             self.is_initialized = True
             self.initialization_error = None
             
             self.logger.info(f"LLaMA CPP model initialized successfully: {model_path}")
             self.logger.info(f"Context window: {self.config.context_window} tokens")
+            self.logger.info(f"Threads: {self.config.n_threads}")
+            self.logger.info(f"GPU layers: {self.config.n_gpu_layers}")
             
             return True
             
@@ -125,17 +135,18 @@ class LlamaCPPModel(BaseLLM):
             max_tokens = max_tokens or self.config.max_tokens
             temperature = temperature or self.config.temperature
             
-            # Generate completion
-            response = self.model.create_completion(
-                prompt=prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=self.config.top_p,
-                top_k=self.config.top_k,
-                repeat_penalty=self.config.repeat_penalty,
-                stream=False,
-                **kwargs
-            )
+            # Generate completion with optimized parameters
+            with self._model_lock:
+                response = self.model.create_completion(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=self.config.top_p,
+                    top_k=self.config.top_k,
+                    repeat_penalty=self.config.repeat_penalty,
+                    stream=False,
+                    **kwargs
+                )
             
             # Extract response
             text = response.choices[0].text
@@ -177,16 +188,17 @@ class LlamaCPPModel(BaseLLM):
             temperature = temperature or self.config.temperature
             
             # Generate streaming completion
-            stream = self.model.create_completion(
-                prompt=prompt,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=self.config.top_p,
-                top_k=self.config.top_k,
-                repeat_penalty=self.config.repeat_penalty,
-                stream=True,
-                **kwargs
-            )
+            with self._model_lock:
+                stream = self.model.create_completion(
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=self.config.top_p,
+                    top_k=self.config.top_k,
+                    repeat_penalty=self.config.repeat_penalty,
+                    stream=True,
+                    **kwargs
+                )
             
             accumulated_text = ""
             total_tokens = 0
@@ -250,16 +262,17 @@ class LlamaCPPModel(BaseLLM):
             ]
             
             # Generate chat completion
-            response = self.model.create_chat_completion(
-                messages=llama_messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=self.config.top_p,
-                top_k=self.config.top_k,
-                repeat_penalty=self.config.repeat_penalty,
-                stream=False,
-                **kwargs
-            )
+            with self._model_lock:
+                response = self.model.create_chat_completion(
+                    messages=llama_messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=self.config.top_p,
+                    top_k=self.config.top_k,
+                    repeat_penalty=self.config.repeat_penalty,
+                    stream=False,
+                    **kwargs
+                )
             
             # Extract response
             text = response.choices[0].message.content
@@ -307,16 +320,17 @@ class LlamaCPPModel(BaseLLM):
             ]
             
             # Generate streaming chat completion
-            stream = self.model.create_chat_completion(
-                messages=llama_messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=self.config.top_p,
-                top_k=self.config.top_k,
-                repeat_penalty=self.config.repeat_penalty,
-                stream=True,
-                **kwargs
-            )
+            with self._model_lock:
+                stream = self.model.create_chat_completion(
+                    messages=llama_messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=self.config.top_p,
+                    top_k=self.config.top_k,
+                    repeat_penalty=self.config.repeat_penalty,
+                    stream=True,
+                    **kwargs
+                )
             
             accumulated_text = ""
             total_tokens = 0
@@ -359,8 +373,31 @@ class LlamaCPPModel(BaseLLM):
         """Cleanup LLaMA CPP model resources."""
         super().cleanup()
         
-        if self.model:
-            # LLaMA CPP models don't have explicit cleanup
-            self.model = None
+        with self._model_lock:
+            if self.model:
+                # LLaMA CPP models don't have explicit cleanup
+                self.model = None
         
         self.logger.info("LLaMA CPP model cleaned up")
+    
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get detailed information about the model."""
+        if not self.model:
+            return {'error': 'Model not initialized'}
+        
+        try:
+            # Get model path
+            model_path = self._get_model_path()
+            
+            return {
+                'model_path': str(model_path) if model_path else None,
+                'model_size': model_path.stat().st_size if model_path and model_path.exists() else None,
+                'context_window': self.config.context_window,
+                'n_threads': self.config.n_threads,
+                'n_gpu_layers': self.config.n_gpu_layers,
+                'is_initialized': self.is_initialized,
+                'total_requests': self.total_requests,
+                'average_response_time': self.average_response_time
+            }
+        except Exception as e:
+            return {'error': f'Failed to get model info: {e}'}

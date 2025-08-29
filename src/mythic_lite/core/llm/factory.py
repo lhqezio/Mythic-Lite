@@ -5,7 +5,8 @@ Provides a clean interface for creating different types of language models,
 enabling easy swapping and configuration management.
 """
 
-from typing import Optional, Dict, Any
+import os
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 from .base import BaseLLM, LLMConfig, ModelType
@@ -14,66 +15,80 @@ from ...utils.logger import get_logger
 
 
 class LLMFactory:
-    """Factory for creating language model instances."""
+    """Factory for creating language model instances with automatic discovery."""
     
     def __init__(self):
+        """Initialize the LLM factory with model discovery."""
         self.logger = get_logger("llm-factory")
         self._available_models = self._discover_available_models()
+        self._model_registry = self._build_model_registry()
     
     def _discover_available_models(self) -> Dict[str, bool]:
-        """Discover which model types are available."""
+        """Discover which model types are available in the environment."""
         models = {}
         
         # Check LLaMA CPP availability
         try:
             import llama_cpp
             models['llama_cpp'] = True
+            self.logger.debug("LLaMA CPP is available")
         except ImportError:
             models['llama_cpp'] = False
+            self.logger.debug("LLaMA CPP is not available")
         
         # Check OpenAI availability
         try:
             import openai
             models['openai'] = True
+            self.logger.debug("OpenAI is available")
         except ImportError:
             models['openai'] = False
+            self.logger.debug("OpenAI is not available")
         
         # Check Anthropic availability
         try:
             import anthropic
             models['anthropic'] = True
+            self.logger.debug("Anthropic is available")
         except ImportError:
             models['anthropic'] = False
+            self.logger.debug("Anthropic is not available")
         
         return models
+    
+    def _build_model_registry(self) -> Dict[ModelType, type]:
+        """Build registry of available model implementations."""
+        registry = {}
+        
+        if self._available_models.get('llama_cpp', False):
+            registry[ModelType.LLAMA_CPP] = LlamaCPPModel
+        
+        # TODO: Add other model implementations
+        # if self._available_models.get('openai', False):
+        #     registry[ModelType.OPENAI] = OpenAIModel
+        # 
+        # if self._available_models.get('anthropic', False):
+        #     registry[ModelType.ANTHROPIC] = AnthropicModel
+        
+        return registry
     
     def create_model(self, config: LLMConfig) -> BaseLLM:
         """Create a language model instance based on configuration."""
         try:
-            if config.model_type == ModelType.LLAMA_CPP:
-                if not self._available_models.get('llama_cpp', False):
-                    raise ImportError("LLaMA CPP is not available")
-                return LlamaCPPModel(config)
+            # Check if model type is supported
+            if config.model_type not in self._model_registry:
+                available_types = [t.value for t in self._model_registry.keys()]
+                raise ValueError(f"Model type '{config.model_type.value}' not supported. Available: {available_types}")
             
-            elif config.model_type == ModelType.OPENAI:
-                if not self._available_models.get('openai', False):
-                    raise ImportError("OpenAI is not available")
-                # TODO: Implement OpenAI model
-                raise NotImplementedError("OpenAI models not yet implemented")
+            # Get model class
+            model_class = self._model_registry[config.model_type]
             
-            elif config.model_type == ModelType.ANTHROPIC:
-                if not self._available_models.get('anthropic', False):
-                    raise ImportError("Anthropic is not available")
-                # TODO: Implement Anthropic model
-                raise NotImplementedError("Anthropic models not yet implemented")
+            # Create and return model instance
+            model = model_class(config)
+            self.logger.info(f"Created {config.model_type.value} model: {model.model_name}")
             
-            elif config.model_type == ModelType.CUSTOM:
-                # TODO: Implement custom model interface
-                raise NotImplementedError("Custom models not yet implemented")
+            return model
             
-            else:
-                raise ValueError(f"Unknown model type: {config.model_type}")
-                
         except Exception as e:
             self.logger.error(f"Failed to create model: {e}")
             raise
@@ -137,6 +152,10 @@ class LLMFactory:
         """Get information about available model types."""
         return self._available_models.copy()
     
+    def get_supported_model_types(self) -> List[ModelType]:
+        """Get list of supported model types."""
+        return list(self._model_registry.keys())
+    
     def validate_model_config(self, config: LLMConfig) -> Dict[str, Any]:
         """Validate a model configuration."""
         validation = {
@@ -144,12 +163,18 @@ class LLMFactory:
             'errors': [],
             'warnings': [],
             'model_type': config.model_type.value,
-            'available': self._available_models.get(config.model_type.value, False)
+            'available': self._available_models.get(config.model_type.value, False),
+            'supported': config.model_type in self._model_registry
         }
         
         # Check if model type is available
         if not validation['available']:
             validation['errors'].append(f"{config.model_type.value} is not available")
+            validation['valid'] = False
+        
+        # Check if model type is supported
+        if not validation['supported']:
+            validation['errors'].append(f"{config.model_type.value} is not supported")
             validation['valid'] = False
         
         # Validate model-specific requirements
@@ -161,16 +186,11 @@ class LLMFactory:
             if config.model_path and not Path(config.model_path).exists():
                 validation['warnings'].append(f"Model path does not exist: {config.model_path}")
         
-        # Validate general parameters
-        if config.max_tokens <= 0:
-            validation['errors'].append("Max tokens must be positive")
-            validation['valid'] = False
-        
-        if config.temperature < 0.0 or config.temperature > 2.0:
-            validation['warnings'].append("Temperature should be between 0.0 and 2.0")
-        
-        if config.context_window <= 0:
-            validation['errors'].append("Context window must be positive")
+        # Validate general parameters using config validation
+        try:
+            config._validate_config()
+        except ValueError as e:
+            validation['errors'].append(str(e))
             validation['valid'] = False
         
         return validation
@@ -208,8 +228,80 @@ class LLMFactory:
         
         else:
             raise ValueError(f"No default config for model type: {model_type}")
+    
+    def list_available_models(self) -> Dict[str, Any]:
+        """List all available models and their status."""
+        models_info = {}
+        
+        for model_type in ModelType:
+            model_info = {
+                'available': self._available_models.get(model_type.value, False),
+                'supported': model_type in self._model_registry,
+                'default_config': None
+            }
+            
+            if model_type in self._model_registry:
+                try:
+                    model_info['default_config'] = self.get_default_config(model_type)
+                except Exception as e:
+                    model_info['error'] = str(e)
+            
+            models_info[model_type.value] = model_info
+        
+        return models_info
+    
+    def test_model_creation(self, model_type: ModelType) -> Dict[str, Any]:
+        """Test if a model type can be created successfully."""
+        try:
+            # Get default config
+            config = self.get_default_config(model_type)
+            
+            # Try to create model
+            model = self.create_model(config)
+            
+            return {
+                'success': True,
+                'model_name': model.model_name,
+                'config': config.to_dict()
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'model_type': model_type.value
+            }
+
+
+# Global factory instance
+_factory_instance: Optional[LLMFactory] = None
 
 
 def get_llm_factory() -> LLMFactory:
-    """Get a language model factory instance."""
-    return LLMFactory()
+    """Get the global LLM factory instance."""
+    global _factory_instance
+    
+    if _factory_instance is None:
+        _factory_instance = LLMFactory()
+    
+    return _factory_instance
+
+
+def create_model(config: LLMConfig) -> BaseLLM:
+    """Create a model using the global factory."""
+    return get_llm_factory().create_model(config)
+
+
+def create_llama_cpp_model(**kwargs) -> BaseLLM:
+    """Create a LLaMA CPP model using the global factory."""
+    return get_llm_factory().create_llama_cpp_model(**kwargs)
+
+
+def validate_config(config: LLMConfig) -> Dict[str, Any]:
+    """Validate a model configuration using the global factory."""
+    return get_llm_factory().validate_model_config(config)
+
+
+def get_available_models() -> Dict[str, Any]:
+    """Get available models using the global factory."""
+    return get_llm_factory().list_available_models()
