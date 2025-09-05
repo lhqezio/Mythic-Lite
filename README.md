@@ -3,9 +3,12 @@
 ## 🪄 What is Mythic? (the non-boring version)
 
 Mythic is my playground for weird AI ideas.  
-Think: Roblox clowns, cursed TikTok demos, and NPCs with emotional damage.  
+Think: Roblox clowns, cursed TikTok experiments, and NPCs with emotional damage.  
 
-Yes, it’s half-baked. But it’s baked just enough to run locally, talk back, and maybe roast you.  
+Yes, it’s half-baked. But half-baked on purpose.  
+Runs locally, talks back, and might roast you if you let it.  
+
+Right now it’s roleplaying as a 19th-century mercenary who talks funny.
 
 ## 🚀 Features
 
