@@ -9,10 +9,10 @@ description = "A lightweight, local AI chatbot system with text-to-speech capabi
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Mythic-Lite Team", email = "team@mythic-lite.dev"}
+    {name = "Hoang Le", email = "lhqezio1010@gmail.com"}
 ]
 maintainers = [
-    {name = "Mythic-Lite Team", email = "team@mythic-lite.dev"}
+    {name = "Hoang Le", email = "lhqezio1010@gmail.com"}
 ]
 keywords = ["ai", "chatbot", "llm", "tts", "asr", "local", "privacy", "offline"]
 classifiers = [
@@ -44,7 +44,7 @@ dependencies = [
     "typing-extensions>=4.8.0",
     "huggingface-hub>=0.19.0",
     "requests>=2.31.0",
-    "vosk>=0.3.45",
+    "vosk>=0.3.44",
     "windows-curses>=2.3.1; sys_platform == 'win32'",
 ]
 

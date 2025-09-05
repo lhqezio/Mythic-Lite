@@ -486,8 +486,9 @@ class ChatbotOrchestrator:
             
             self.logger.debug(f"🎵 TTS completed after {wait_count * 0.1:.1f}s")
             
-            # Add a small buffer to ensure audio is completely finished
-            time.sleep(0.5)
+            # Add a longer buffer to ensure audio is completely finished and prevent overlapping
+            # This prevents ASR from picking up the tail end of TTS audio
+            time.sleep(5.0)  # Increased to 3.0s to prevent ASR overlap issues
             self.logger.debug("🎵 Buffer time completed, ready to show listening status")
             
         except Exception as e:
