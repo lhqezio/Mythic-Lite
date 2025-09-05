@@ -1,6 +1,11 @@
 # Mythic-Lite
 
-A lightweight, local AI chatbot system with text-to-speech capabilities, built for privacy-conscious users who want to run AI conversations entirely on their own hardware. This is a demo implementation showcasing Mythic, an AI-powered game character that can engage in natural conversations.
+## 🪄 What is Mythic? (the non-boring version)
+
+Mythic is my playground for weird AI ideas.  
+Think: Roblox clowns, cursed TikTok demos, and NPCs with emotional damage.  
+
+Yes, it’s half-baked. But it’s baked just enough to run locally, talk back, and maybe roast you.  
 
 ## 🚀 Features
 
