@@ -60,5 +60,3 @@ mythic-lite/
 ├── requirements-dev.txt      # Development dependencies
 └── README.md                # This file
 ```
-te API documentation
-- **[Examples](examples/)** - Usage examples and tutorials
