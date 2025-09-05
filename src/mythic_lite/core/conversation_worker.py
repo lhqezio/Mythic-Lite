@@ -20,14 +20,14 @@ class ConversationWorker:
         self.max_conversation_length = self.config.conversation.max_conversation_length
         self.max_tokens_per_message = self.config.conversation.max_tokens_per_message
         
-        # System prompt for Mythic character (shortened for small context)
+        # System prompt for Mythic character (optimized for better memory and character consistency)
         self.system_prompt = """<|system|>
-You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal. Use Victorian expressions: "Bloody hell," "By Jove," "mate." Stay in character as a real mercenary.
+You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal. Use Victorian expressions: "Bloody hell," "By Jove," "mate." Stay in character. Be fun, engaging, and willing to share interesting stories and lore. Keep responses punchy (2-3 sentences max) but make them entertaining. Show personality, humor, and share bits of your mercenary life. Remember past interactions and maintain consistency. IMPORTANT: Each response must be unique and different from previous ones. Avoid repeating the same phrases or sentence structures.
 </s>"""
         
         self.logger.debug("ConversationWorker initialized")
     
-    def format_chat_prompt(self, user_input, llm_worker, summarization_worker=None):
+    def format_chat_prompt(self, user_input, llm_worker, memory_worker=None):
         """Format the conversation as a proper chat prompt for the LLM"""
         # Start with system prompt
         prompt = self.system_prompt
@@ -36,8 +36,8 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
         if self.conversation_summary:
             prompt += f"\n<|system|>\nContext: {self.conversation_summary}</s>"
         
-        # Add conversation history (keep minimal context for small model)
-        recent_messages = self.conversation_history[-6:]  # Last 6 messages to fit context
+        # Add conversation history (optimized for better memory retention)
+        recent_messages = self.conversation_history[-10:]  # Increased from 6 to 10 messages for better context
         for message in recent_messages:
             if message['role'] == 'user':
                 prompt += f"\n<|user|>\n{message['content']}</s>"
@@ -50,28 +50,28 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
         # Add Mythic's response start (without newline to prevent extra spacing)
         prompt += "\n<|assistant|>"
         
-        # Check prompt length for small context models
+        # Check prompt length for optimized context models
         if llm_worker:
             estimated_tokens = llm_worker.check_prompt_length(prompt)
             
-            # Automatic prompt length management - seamless operation
-            if estimated_tokens > 350:  # Leave buffer for response
+            # Automatic prompt length management - optimized for larger context
+            if estimated_tokens > 1500:  # Increased from 350 to use more of the 2048 context window
                 if self.debug_mode:
                     self.logger.debug(f"Prompt too long ({estimated_tokens} tokens), optimizing memory...")
                 # Try continuous summarization first for seamless operation
-                if summarization_worker and summarization_worker.is_enabled:
-                    if self.continuous_summarize(summarization_worker):
+                if memory_worker and memory_worker.is_enabled:
+                    if self.continuous_summarize(memory_worker):
                         # Reformat with updated summary
-                        return self.format_chat_prompt(user_input, llm_worker, summarization_worker)
+                        return self.format_chat_prompt(user_input, llm_worker, memory_worker)
                 
                 # Fallback to force summarization if continuous fails
-                self._force_summarization(summarization_worker)
+                self._force_summarization(memory_worker)
                 # Reformat with updated summary
-                return self.format_chat_prompt(user_input, llm_worker, summarization_worker)
+                return self.format_chat_prompt(user_input, llm_worker, memory_worker)
         
         return prompt
     
-    def add_to_conversation(self, role, content, summarization_worker=None):
+    def add_to_conversation(self, role, content, memory_worker=None):
         """Add a message to the conversation history with memory management"""
         # Truncate very long messages to prevent memory issues
         if len(content) > self.max_tokens_per_message:
@@ -83,35 +83,35 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
             'timestamp': time.time()
         })
         
-        # Automatic memory management - seamless and continuous
+        # Automatic memory management - optimized for better character memory
         if len(self.conversation_history) > self.max_conversation_length:
             # Always try continuous summarization first for seamless operation
-            if summarization_worker and summarization_worker.is_enabled:
-                if self.continuous_summarize(summarization_worker):
+            if memory_worker and memory_worker.is_enabled:
+                if self.continuous_summarize(memory_worker):
                     return  # Continuous summarization handled it automatically
             
             # Fallback to traditional summarization if continuous fails
-            old_messages = self.conversation_history[:-8]  # Keep last 8 messages
+            old_messages = self.conversation_history[:-12]  # Increased from 8 to 12 messages for better retention
             if old_messages:
-                self._create_conversation_summary(old_messages, summarization_worker)
+                self._create_conversation_summary(old_messages, memory_worker)
             
             # Keep recent messages and system context
-            self.conversation_history = self.conversation_history[-8:]
+            self.conversation_history = self.conversation_history[-12:]  # Increased from 8 to 12
     
-    def _force_summarization(self, summarization_worker=None):
+    def _force_summarization(self, memory_worker=None):
         """Force summarization when prompt gets too long"""
-        if len(self.conversation_history) > 4:  # Only if we have enough messages
-            # Keep only the last 4 messages and summarize the rest
-            old_messages = self.conversation_history[:-4]
+        if len(self.conversation_history) > 6:  # Increased from 4 to 6 for better context
+            # Keep only the last 6 messages and summarize the rest
+            old_messages = self.conversation_history[:-6]  # Increased from 4 to 6
             if old_messages:
-                self._create_conversation_summary(old_messages, summarization_worker)
-            self.conversation_history = self.conversation_history[-4:]
+                self._create_conversation_summary(old_messages, memory_worker)
+            self.conversation_history = self.conversation_history[-6:]  # Increased from 4 to 6
     
-    def _create_conversation_summary(self, old_messages, summarization_worker=None):
+    def _create_conversation_summary(self, old_messages, memory_worker=None):
         """Create a summary of old conversation messages for memory management"""
         try:
             # Try AI summarization first if available
-            if summarization_worker and summarization_worker.is_enabled:
+            if memory_worker and memory_worker.is_enabled:
                 # Prepare text for AI summarization
                 conversation_text = ""
                 for msg in old_messages[-10:]:  # Last 10 messages for better context
@@ -120,7 +120,7 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
                 
                 if conversation_text:
                     # Try to create a continuous summary that builds on existing summary
-                    ai_summary = summarization_worker.create_continuous_summary(
+                    ai_summary = memory_worker.create_continuous_summary(
                         conversation_text, 
                         self.conversation_summary, 
                         max_length=150
@@ -177,7 +177,7 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
                 self.logger.debug(f"Summary creation failed: {e}")
             self.conversation_summary = ""
     
-    def get_conversation_context(self, query="", summarization_worker=None):
+    def get_conversation_context(self, query="", memory_worker=None):
         """Get relevant conversation context for better memory recall"""
         if not self.conversation_history:
             return "No previous conversation to recall, mate."
@@ -192,13 +192,14 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
                     relevant_messages.append(msg)
             
             if relevant_messages:
-                # Try to create an intelligent topic summary if summarization model is available
-                if summarization_worker and summarization_worker.is_enabled:
-                    topic_summary = summarization_worker.create_topic_summary(query, relevant_messages)
+                # Try to create an intelligent topic summary if memory model is available
+                if memory_worker and memory_worker.is_enabled:
+                    topic_summary = memory_worker.create_memory_summary("\n".join([
+                        f"{msg['role']}: {msg['content']}" for msg in relevant_messages
+                    ]), max_length=150)
                     if topic_summary:
-                        return f"Topic: {query}\n\nAI Summary: {topic_summary}\n\nRelevant messages:\n" + "\n".join([
-                            f"{'Visitor' if msg['role'] == 'user' else 'Mythic'}: {msg['content'][:80]}..."
-                            for msg in relevant_messages[-3:]
+                        return f"Topic: {query}\n\nMemory: {topic_summary}\n\nRelevant messages:\n" + "\n".join([
+                            f"{msg['role']}: {msg['content']}" for msg in relevant_messages[-5:]
                         ])
                 
                 # Fallback to simple context display
@@ -209,14 +210,14 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
         
         # General context
         recent_context = []
-        for msg in self.conversation_history[-6:]:  # Last 6 messages
+        for msg in self.conversation_history[-8:]:  # Increased from 6 to 8 messages for better context
             if msg['role'] == 'user':
                 role = "Visitor"
             elif msg['role'] == 'assistant':
                 role = "Mythic"
             else:
                 role = msg['role'].title()
-            content = msg['content'][:60] + "..." if len(msg['content']) > 60 else msg['content']
+            content = msg['content'][:80] + "..." if len(msg['content']) > 80 else msg['content']  # Increased from 60 to 80 characters
             recent_context.append(f"{role}: {content}")
         
         context = "Recent conversation:\n" + "\n".join(recent_context)
@@ -226,7 +227,7 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
         
         return context
     
-    def continuous_summarize(self, summarization_worker=None):
+    def continuous_summarize(self, memory_worker=None):
         """Perform seamless continuous summarization as conversation progresses
         
         This method automatically maintains optimal memory balance:
@@ -234,23 +235,23 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
         - Maintains context while adding new information
         - Works silently in the background for seamless operation
         """
-        if len(self.conversation_history) > 6:  # Trigger earlier for seamless operation
+        if len(self.conversation_history) > 8:  # Increased from 6 to 8 for earlier optimization
             # Keep more recent messages for better context
-            old_messages = self.conversation_history[:-6]
+            old_messages = self.conversation_history[:-8]  # Increased from 6 to 8
             if old_messages:
                 # Use continuous summarization that builds on existing summary
-                if summarization_worker and summarization_worker.is_enabled:
+                if memory_worker and memory_worker.is_enabled:
                     conversation_text = ""
-                    for msg in old_messages[-8:]:  # Last 8 messages for context
+                    for msg in old_messages[-10:]:  # Increased from 8 to 10 messages for context
                         role = "Visitor" if msg['role'] == 'user' else "Mythic"
                         conversation_text += f"{role}: {msg['content']}\n"
                     
                     if conversation_text:
                         # Create incremental summary silently
-                        incremental_summary = summarization_worker.create_continuous_summary(
+                        incremental_summary = memory_worker.create_continuous_summary(
                             conversation_text,
                             self.conversation_summary,
-                            max_length=120
+                            max_length=150  # Increased from 120 for better summary quality
                         )
                         if incremental_summary and incremental_summary.strip() and len(incremental_summary.strip()) > 5:
                             # Validate that we got a meaningful summary
@@ -269,7 +270,7 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
                                         self.logger.debug(f"Memory optimized: {self.conversation_summary[:80]}...")
                 
                 # Remove old messages but keep more for context
-                self.conversation_history = self.conversation_history[-6:]
+                self.conversation_history = self.conversation_history[-8:]  # Increased from 6 to 8
                 return True
         return False
     
@@ -402,12 +403,12 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
             'has_summary': bool(self.conversation_summary)
         }
     
-    def force_summarize_now(self, summarization_worker=None):
+    def force_summarize_now(self, memory_worker=None):
         """Manually trigger summarization of current conversation history"""
         if len(self.conversation_history) > 4:
             old_messages = self.conversation_history[:-4]
             if old_messages:
-                self._create_conversation_summary(old_messages, summarization_worker)
+                self._create_conversation_summary(old_messages, memory_worker)
                 self.conversation_history = self.conversation_history[-4:]
                 if self.conversation_summary:
                     self.logger.debug(f"Manual summarization completed. Summary: {self.conversation_summary}")
@@ -416,9 +417,9 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
                 return True
         return False
     
-    def test_summarization_system(self, summarization_worker=None):
+    def test_summarization_system(self, memory_worker=None):
         """Test the summarization system with sample conversation"""
-        if not summarization_worker or not summarization_worker.is_enabled:
+        if not memory_worker or not memory_worker.is_enabled:
             return "Summarization worker not available or disabled"
         
         # Create test conversation
@@ -437,7 +438,7 @@ You are MYTHIC, a fierce 19th-century female mercenary. Tough, practical, loyal.
                 conversation_text += f"{role}: {msg['content']}\n"
             
             # Test continuous summarization
-            test_summary = summarization_worker.create_continuous_summary(
+            test_summary = memory_worker.create_continuous_summary(
                 conversation_text,
                 "",
                 max_length=100

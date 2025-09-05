@@ -1,6 +1,7 @@
 llama-cpp-python>=0.2.0
 piper-tts>=1.2.0
 numpy>=1.21.0
+scipy>=1.9.0
 PyAudio>=0.2.11
 colorama>=0.4.6
 rich>=13.7.0

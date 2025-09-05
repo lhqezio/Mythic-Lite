@@ -17,6 +17,12 @@ try:
     import pyaudio
     import numpy as np
     from piper import PiperVoice
+    # Try to import scipy for audio processing
+    try:
+        from scipy import signal
+        SCIPY_AVAILABLE = True
+    except ImportError:
+        SCIPY_AVAILABLE = False
     AUDIO_AVAILABLE = True
 except ImportError:
     AUDIO_AVAILABLE = False
@@ -42,6 +48,7 @@ except ImportError:
     
     pyaudio = MockPyAudio()
     np = None
+    SCIPY_AVAILABLE = False
 
 from ..utils.logger import get_logger
 from ..core.config import TTSConfig
@@ -52,27 +59,9 @@ class TTSWorker:
     
     def __init__(self, config: Optional[Any] = None):
         if config is None:
-            # Mock config for testing
-            self.config = type('MockConfig', (), {
-                'tts': type('MockTTSConfig', (), {
-                    'voice_path': 'amy-low',
-                    'sample_rate': 22050,
-                    'channels': 1,
-                    'audio_format': 'paInt16',
-                    'enable_audio': True,
-                    'AVAILABLE_VOICES': {
-                        'amy-low': 'en/en_US/amy/low',
-                        'amy-medium': 'en/en_US/amy/medium',
-                        'amy-high': 'en/en_US/amy/high',
-                        'jenny-low': 'en/en_US/jenny/low',
-                        'jenny-medium': 'en/en_US/jenny/medium',
-                        'jenny-high': 'en/en_US/jenny/high'
-                    }
-                })(),
-                'debug_mode': False
-            })()
-        else:
-            self.config = config
+            raise ValueError("TTS worker requires a configuration object. All config must come from the main config file.")
+        
+        self.config = config
         
         self.logger = get_logger("tts-worker")
         
@@ -226,6 +215,83 @@ class TTSWorker:
         
         return None
     
+    def preview_text_cleaning(self, text: str) -> Dict[str, Any]:
+        """
+        Preview the text cleaning process without actually processing TTS.
+        
+        This method is useful for debugging and understanding how text will be cleaned
+        before it's sent to the TTS engine.
+        
+        Args:
+            text: Raw text to preview cleaning for
+            
+        Returns:
+            Dictionary containing original text, cleaned text, and cleaning details
+        """
+        if not text:
+            return {
+                "original": "",
+                "cleaned": "",
+                "was_cleaned": False,
+                "cleaning_details": "No text provided"
+            }
+        
+        original_text = text
+        cleaned_text = self._clean_text_for_tts(text)
+        
+        # Analyze what was removed
+        cleaning_details = []
+        
+        if len(cleaned_text) < len(original_text):
+            cleaning_details.append(f"Text length reduced from {len(original_text)} to {len(cleaned_text)} characters")
+        
+        # Check for common artifacts that were removed
+        artifacts_found = []
+        llm_artifacts = ['</s>', '<s>', '<|', '|>', '[INST]', '[/INST]', '```', '---', '***']
+        for artifact in llm_artifacts:
+            if artifact in original_text:
+                artifacts_found.append(artifact)
+        
+        if artifacts_found:
+            cleaning_details.append(f"Removed LLM artifacts: {', '.join(artifacts_found)}")
+        
+        # Check for markdown
+        if '**' in original_text or '__' in original_text or '#' in original_text:
+            cleaning_details.append("Removed markdown formatting")
+        
+        # Check for code blocks
+        if '```' in original_text:
+            cleaning_details.append("Removed code blocks")
+        
+        # Check for HTML
+        if '<' in original_text and '>' in original_text:
+            cleaning_details.append("Removed HTML tags")
+        
+        # Check for programming artifacts
+        prog_artifacts = ['def ', 'class ', 'import ', 'print(', 'function ']
+        found_prog = [a for a in prog_artifacts if a in original_text]
+        if found_prog:
+            cleaning_details.append(f"Removed programming artifacts: {', '.join(found_prog)}")
+        
+        # Check for system prompts
+        system_prompts = ['Assistant:', 'User:', 'Here is the', 'Let me explain']
+        found_prompts = [p for p in system_prompts if p in original_text]
+        if found_prompts:
+            cleaning_details.append(f"Removed system prompts: {', '.join(found_prompts)}")
+        
+        if not cleaning_details:
+            cleaning_details.append("No significant cleaning was needed")
+        
+        return {
+            "original": original_text,
+            "cleaned": cleaned_text,
+            "was_cleaned": len(cleaned_text) != len(original_text) or cleaned_text != original_text.strip(),
+            "cleaning_details": cleaning_details,
+            "original_length": len(original_text),
+            "cleaned_length": len(cleaned_text),
+            "is_speech_ready": bool(cleaned_text and len(cleaned_text.strip()) >= 2)
+        }
+
     def text_to_speech_stream(self, text: str) -> Optional[bytes]:
         """
         Convert text to speech using Piper TTS with streaming.
@@ -245,17 +311,31 @@ class TTSWorker:
             return None
         
         try:
+            # Log the original text for debugging
+            if self.config.debug_mode:
+                self.logger.debug(f"Original TTS input: '{text[:200]}...'")
+            
             # Clean text for TTS to avoid phoneme errors
             clean_text = self._clean_text_for_tts(text)
+            
             if not clean_text:
                 # Only warn for meaningful text that gets cleaned away, not punctuation
                 if len(text.strip()) > 1 and not text.strip().isspace() and not all(char in '.,!?;:()[]{}"\'' for char in text.strip()):
-                    self.logger.warning(f"Text cleaning resulted in empty text: '{text}'")
+                    self.logger.warning(f"Text cleaning resulted in empty text: '{text[:100]}...'")
+                    
+                    # Provide detailed cleaning preview for debugging
+                    if self.config.debug_mode:
+                        preview = self.preview_text_cleaning(text)
+                        self.logger.debug(f"Text cleaning preview: {preview}")
                 else:
-                    self.logger.debug(f"Skipping punctuation/short text for TTS: '{text}'")
+                    self.logger.debug(f"Skipping punctuation/short text for TTS: '{text[:100]}...'")
                 return None
             
-            self.logger.debug(f"Generating TTS for text: '{clean_text}'")
+            # Log the cleaned text for debugging
+            if self.config.debug_mode:
+                self.logger.debug(f"Cleaned TTS text: '{clean_text[:200]}...'")
+            
+            self.logger.debug(f"Generating TTS for text: '{clean_text[:100]}...'")
             start_time = time.time()
             
             # Generate audio - handle AudioChunk objects from Piper TTS
@@ -331,6 +411,10 @@ class TTSWorker:
                 self.logger.debug("Audio result is bytes, using directly")
                 audio_data = audio_result
             
+            # Apply pitch and speed adjustments if configured
+            if self.config.tts.pitch != 0.0 or self.config.tts.speed != 1.0:
+                audio_data = self._adjust_audio_pitch_and_speed(audio_data)
+            
             # Update performance metrics
             generation_time = time.time() - start_time
             self._update_performance_metrics(len(audio_data), generation_time)
@@ -348,28 +432,213 @@ class TTSWorker:
             return None
     
     def _clean_text_for_tts(self, text: str) -> str:
-        """Clean text for TTS processing."""
+        """
+        Comprehensive text cleaning for TTS processing.
+        
+        This method ensures that only clean, speech-ready text is passed to the TTS engine,
+        removing all formatting artifacts, non-speech content, and problematic characters.
+        
+        Args:
+            text: Raw text that may contain various artifacts and formatting
+            
+        Returns:
+            Clean text suitable for TTS, or empty string if no speech content remains
+        """
         if not text:
             return ""
         
-        # Remove any remaining prompt artifacts that might cause TTS issues
+        # Step 1: Remove common LLM/chat artifacts and formatting
         clean_text = text.strip()
-        clean_text = clean_text.replace('</s>', '').replace('<s>', '').replace('<|', '').replace('|>', '')
-        clean_text = clean_text.replace('  ', ' ').strip()  # Remove double spaces
         
-        # Remove very short text that might cause TTS issues
-        if len(clean_text) < 2:
+        # Remove common LLM response artifacts
+        llm_artifacts = [
+            '</s>', '<s>', '<|', '|>', '<|im_start|>', '<|im_end|>',
+            '<|system|>', '<|user|>', '<|assistant|>', '<|end|>',
+            '[INST]', '[/INST]', '<|endoftext|>', '<|endofmask|>',
+            '```', '```python', '```javascript', '```html', '```css', '```json',
+            '```xml', '```yaml', '```toml', '```bash', '```shell',
+            '---', '***', '___', '==', '**', '__', '~~'
+        ]
+        
+        for artifact in llm_artifacts:
+            clean_text = clean_text.replace(artifact, '')
+        
+        # Remove markdown-style formatting
+        import re
+        
+        # Remove markdown headers
+        clean_text = re.sub(r'^#{1,6}\s+', '', clean_text, flags=re.MULTILINE)
+        
+        # Remove markdown bold/italic
+        clean_text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_text)
+        clean_text = re.sub(r'\*(.*?)\*', r'\1', clean_text)
+        clean_text = re.sub(r'__(.*?)__', r'\1', clean_text)
+        clean_text = re.sub(r'_(.*?)_', r'\1', clean_text)
+        
+        # Remove markdown code blocks (inline and block)
+        clean_text = re.sub(r'`([^`]+)`', r'\1', clean_text)
+        clean_text = re.sub(r'```[\s\S]*?```', '', clean_text)
+        
+        # Remove markdown links
+        clean_text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_text)
+        
+        # Remove markdown images
+        clean_text = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', clean_text)
+        
+        # Remove HTML tags
+        clean_text = re.sub(r'<[^>]+>', '', clean_text)
+        
+        # Remove LaTeX-style math
+        clean_text = re.sub(r'\$([^$]+)\$', r'\1', clean_text)
+        clean_text = re.sub(r'\\\(([^)]+)\\\)', r'\1', clean_text)
+        clean_text = re.sub(r'\\\[([^\]]+)\\\]', r'\1', clean_text)
+        
+        # Remove common programming artifacts
+        programming_artifacts = [
+            'def ', 'class ', 'import ', 'from ', 'return ', 'if __name__ == "__main__":',
+            'print(', 'print (', 'console.log(', 'System.out.println(',
+            'public class', 'private ', 'public ', 'protected ', 'static ',
+            'function ', 'var ', 'let ', 'const ', 'async ', 'await ',
+            'try:', 'except:', 'catch:', 'finally:', 'with:', 'for:', 'while:',
+            'switch:', 'case:', 'default:', 'break;', 'continue;', 'return;'
+        ]
+        
+        for artifact in programming_artifacts:
+            clean_text = clean_text.replace(artifact, '')
+        
+        # Remove common system prompts and instructions
+        system_artifacts = [
+            'Assistant:', 'User:', 'Human:', 'AI:', 'Bot:', 'System:',
+            'Here is the', 'Here\'s the', 'I can help you with',
+            'I understand you want', 'Based on your request',
+            'Let me explain', 'I\'ll help you', 'I can provide',
+            'The answer is', 'To answer your question',
+            'Here\'s what I found', 'According to the information'
+        ]
+        
+        for artifact in system_artifacts:
+            clean_text = clean_text.replace(artifact, '')
+        
+        # Step 2: Clean up whitespace and formatting
+        # Replace multiple spaces with single space
+        clean_text = re.sub(r'\s+', ' ', clean_text)
+        
+        # Remove leading/trailing whitespace
+        clean_text = clean_text.strip()
+        
+        # Remove empty lines and normalize line breaks
+        lines = [line.strip() for line in clean_text.split('\n')]
+        lines = [line for line in lines if line]
+        clean_text = ' '.join(lines)
+        
+        # Step 3: Remove problematic punctuation and characters
+        # Remove excessive punctuation (more than 3 of the same type)
+        clean_text = re.sub(r'[.!?]{4,}', '...', clean_text)
+        clean_text = re.sub(r'[,;:]{4,}', ',', clean_text)
+        clean_text = re.sub(r'[-_]{4,}', '-', clean_text)
+        clean_text = re.sub(r'[=+]{4,}', '=', clean_text)
+        
+        # Remove standalone punctuation marks
+        clean_text = re.sub(r'\s+[.,!?;:]\s*$', '', clean_text)
+        clean_text = re.sub(r'^\s*[.,!?;:]\s+', '', clean_text)
+        
+        # Remove brackets and parentheses that might be empty or problematic
+        clean_text = re.sub(r'\(\s*\)', '', clean_text)  # Empty parentheses
+        clean_text = re.sub(r'\[\s*\]', '', clean_text)  # Empty brackets
+        clean_text = re.sub(r'{\s*}', '', clean_text)    # Empty braces
+        
+        # Remove quotes that might be empty or problematic
+        clean_text = re.sub(r'"\s*"', '', clean_text)   # Empty double quotes
+        clean_text = re.sub(r"'\s*'", '', clean_text)   # Empty single quotes
+        
+        # Step 4: Remove non-speech content patterns
+        # Remove file paths and URLs
+        clean_text = re.sub(r'[a-zA-Z]:\\[^\s]+', '', clean_text)  # Windows paths
+        clean_text = re.sub(r'/[^\s]+', '', clean_text)             # Unix paths
+        clean_text = re.sub(r'https?://[^\s]+', '', clean_text)     # URLs
+        
+        # Remove version numbers and technical identifiers
+        clean_text = re.sub(r'v\d+\.\d+(\.\d+)?', '', clean_text)
+        clean_text = re.sub(r'[A-Z]{2,}_[A-Z0-9_]+', '', clean_text)
+        
+        # Remove email addresses
+        clean_text = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '', clean_text)
+        
+        # Remove IP addresses
+        clean_text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '', clean_text)
+        
+        # Remove hex codes
+        clean_text = re.sub(r'#[0-9A-Fa-f]{6}', '', clean_text)
+        
+        # Step 5: Final cleanup and validation
+        # Clean up any remaining artifacts
+        clean_text = re.sub(r'\s+', ' ', clean_text)  # Final whitespace cleanup
+        clean_text = clean_text.strip()
+        
+        # Remove any remaining problematic patterns
+        clean_text = re.sub(r'^\s*[^\w\s]*\s*$', '', clean_text)  # Only special chars
+        
+        # Final validation - ensure we have actual speech content
+        if not clean_text:
             return ""
         
-        # Remove chunks that are only punctuation or whitespace
-        if clean_text and clean_text.strip().isspace():
+        # Check if the remaining text is meaningful (not just punctuation/symbols)
+        speech_chars = len(re.findall(r'[a-zA-Z]', clean_text))
+        total_chars = len(clean_text.strip())
+        
+        # If less than 50% of characters are letters, it's probably not speech
+        if total_chars > 0 and speech_chars / total_chars < 0.5:
+            self.logger.debug(f"Text appears to be mostly non-speech content: '{clean_text[:100]}...'")
             return ""
         
-        # Remove chunks that are only punctuation marks
-        if clean_text and all(char in '.,!?;:()[]{}"\'' for char in clean_text.strip()):
+        # Minimum length check
+        if len(clean_text.strip()) < 2:
             return ""
+        
+        # Log the cleaning process for debugging
+        if self.config.debug_mode:
+            self.logger.debug(f"Text cleaned: '{text[:100]}...' -> '{clean_text[:100]}...'")
         
         return clean_text
+    
+    def _adjust_audio_pitch_and_speed(self, audio_data: bytes) -> bytes:
+        """Adjust audio pitch and speed using numpy/scipy."""
+        if not SCIPY_AVAILABLE or not AUDIO_AVAILABLE:
+            self.logger.debug("Scipy not available, skipping audio adjustment")
+            return audio_data
+        
+        try:
+            # Convert bytes to numpy array
+            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            
+            # Apply speed adjustment (length_scale)
+            if self.config.tts.speed != 1.0:
+                # Resample to change speed
+                new_length = int(len(audio_array) / self.config.tts.speed)
+                audio_array = signal.resample(audio_array, new_length).astype(np.int16)
+                self.logger.debug(f"Applied speed adjustment: {self.config.tts.speed}x")
+            
+            # Apply pitch adjustment
+            if self.config.tts.pitch != 0.0:
+                # Pitch shifting using phase vocoder
+                # Convert to float for processing
+                audio_float = audio_array.astype(np.float32) / 32767.0
+                
+                # Apply pitch shift
+                pitch_factor = 2 ** (self.config.tts.pitch / 12.0)  # Convert semitones to factor
+                audio_shifted = signal.resample(audio_float, int(len(audio_float) * pitch_factor))
+                
+                # Resample back to original length to maintain duration
+                audio_array = signal.resample(audio_shifted, len(audio_array)).astype(np.int16)
+                self.logger.debug(f"Applied pitch adjustment: {self.config.tts.pitch} semitones")
+            
+            # Convert back to bytes
+            return audio_array.tobytes()
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to adjust audio pitch/speed: {e}")
+            self.logger.debug(f"Audio adjustment error details: {e}", exc_info=True)
+            return audio_data
     
     def start_audio_player(self):
         """Start the background audio player thread."""
@@ -651,6 +920,139 @@ class TTSWorker:
             self.logger.error(f"Error during TTS cleanup: {e}")
             self.logger.debug(f"TTS cleanup error details: {e}", exc_info=True)
 
+    def validate_text_for_speech(self, text: str) -> Dict[str, Any]:
+        """
+        Validate text quality and determine if it's suitable for TTS.
+        
+        This method provides detailed analysis of text quality and identifies
+        potential issues that might affect TTS output.
+        
+        Args:
+            text: Text to validate
+            
+        Returns:
+            Dictionary containing validation results and recommendations
+        """
+        if not text:
+            return {
+                "is_valid": False,
+                "issues": ["No text provided"],
+                "recommendations": ["Provide text content"],
+                "quality_score": 0.0
+            }
+        
+        issues = []
+        recommendations = []
+        quality_score = 100.0
+        
+        # Check text length
+        if len(text.strip()) < 2:
+            issues.append("Text too short for meaningful speech")
+            recommendations.append("Ensure text has at least 2 characters")
+            quality_score -= 50.0
+        
+        # Check for excessive whitespace
+        whitespace_ratio = len(text) - len(text.strip())
+        if whitespace_ratio > len(text) * 0.3:
+            issues.append("Excessive whitespace")
+            recommendations.append("Clean up unnecessary whitespace")
+            quality_score -= 10.0
+        
+        # Check for LLM artifacts
+        llm_artifacts = ['</s>', '<s>', '<|', '|>', '[INST]', '[/INST]', '```']
+        found_artifacts = [a for a in llm_artifacts if a in text]
+        if found_artifacts:
+            issues.append(f"Contains LLM artifacts: {', '.join(found_artifacts)}")
+            recommendations.append("Clean text before TTS processing")
+            quality_score -= 20.0
+        
+        # Check for markdown formatting
+        if '**' in text or '__' in text or '#' in text:
+            issues.append("Contains markdown formatting")
+            recommendations.append("Remove markdown before TTS processing")
+            quality_score -= 15.0
+        
+        # Check for code blocks
+        if '```' in text:
+            issues.append("Contains code blocks")
+            recommendations.append("Remove code blocks before TTS processing")
+            quality_score -= 25.0
+        
+        # Check for HTML tags
+        if '<' in text and '>' in text:
+            issues.append("Contains HTML tags")
+            recommendations.append("Remove HTML tags before TTS processing")
+            quality_score -= 15.0
+        
+        # Check for programming artifacts
+        prog_patterns = [r'\bdef\s+', r'\bclass\s+', r'\bimport\s+', r'\bprint\s*\(']
+        import re
+        for pattern in prog_patterns:
+            if re.search(pattern, text):
+                issues.append("Contains programming code")
+                recommendations.append("Remove programming code before TTS processing")
+                quality_score -= 30.0
+                break
+        
+        # Check for system prompts
+        system_patterns = ['Assistant:', 'User:', 'Here is the', 'Let me explain']
+        for pattern in system_patterns:
+            if pattern in text:
+                issues.append("Contains system prompts")
+                recommendations.append("Remove system prompts before TTS processing")
+                quality_score -= 20.0
+                break
+        
+        # Check for non-speech content
+        speech_chars = len(re.findall(r'[a-zA-Z]', text))
+        total_chars = len(text.strip())
+        if total_chars > 0:
+            speech_ratio = speech_chars / total_chars
+            if speech_ratio < 0.5:
+                issues.append("Low speech content ratio")
+                recommendations.append("Ensure text contains mostly readable words")
+                quality_score -= 25.0
+        
+        # Check for excessive punctuation
+        punct_ratio = len(re.findall(r'[.,!?;:()[\]{}"\']', text)) / max(total_chars, 1)
+        if punct_ratio > 0.3:
+            issues.append("Excessive punctuation")
+            recommendations.append("Reduce unnecessary punctuation")
+            quality_score -= 10.0
+        
+        # Ensure quality score doesn't go below 0
+        quality_score = max(0.0, quality_score)
+        
+        # Determine if text is valid for TTS
+        is_valid = quality_score >= 50.0 and len(text.strip()) >= 2
+        
+        return {
+            "is_valid": is_valid,
+            "issues": issues,
+            "recommendations": recommendations,
+            "quality_score": quality_score,
+            "text_length": len(text),
+            "speech_ratio": speech_ratio if total_chars > 0 else 0.0,
+            "punct_ratio": punct_ratio,
+            "cleaned_preview": self._clean_text_for_tts(text)[:100] if is_valid else ""
+        }
+    
+    def get_cleaning_statistics(self) -> Dict[str, Any]:
+        """
+        Get statistics about text cleaning performance.
+        
+        Returns:
+            Dictionary containing cleaning statistics
+        """
+        return {
+            "total_texts_processed": self.total_requests,
+            "texts_cleaned": getattr(self, '_texts_cleaned', 0),
+            "texts_rejected": getattr(self, '_texts_rejected', 0),
+            "average_cleaning_reduction": getattr(self, '_avg_cleaning_reduction', 0.0),
+            "common_artifacts_removed": getattr(self, '_common_artifacts', {}),
+            "last_cleaning_result": getattr(self, '_last_cleaning_result', None)
+        }
+
     def speak(self, text: str) -> bool:
         """
         Convert text to speech and play it immediately.
@@ -670,6 +1072,18 @@ class TTSWorker:
             return False
         
         try:
+            # Validate text quality first
+            validation = self.validate_text_for_speech(text)
+            if not validation["is_valid"]:
+                self.logger.warning(f"Text quality issues detected: {validation['issues']}")
+                if self.config.debug_mode:
+                    self.logger.debug(f"Text validation details: {validation}")
+            
+            # Preview text cleaning if in debug mode
+            if self.config.debug_mode:
+                preview = self.preview_text_cleaning(text)
+                self.logger.debug(f"Text cleaning preview: {preview}")
+            
             self.logger.info(f"Speaking: {text[:50]}...")
             
             # Generate audio

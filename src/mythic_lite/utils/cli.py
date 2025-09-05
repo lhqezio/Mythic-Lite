@@ -57,6 +57,7 @@ def print_help_table():
         ("chat", "Start text-based chat", "mythic chat"),
         ("voice", "Start voice conversation", "mythic voice"),
         ("status", "Show system status", "mythic status"),
+        ("benchmark", "Run comprehensive benchmark", "mythic benchmark"),
         ("init", "Initialize system", "mythic init"),
         ("config", "Show configuration", "mythic config"),
         ("help", "Show this help", "mythic help")
@@ -94,8 +95,8 @@ def create_debug_config():
         
         # TTS configuration
         tts = type('obj', (object,), {
-            'voice_path': 'amy-low',
-            'sample_rate': 22050,
+                    'voice_path': 'ljspeech-high',
+        'sample_rate': 22050,
             'channels': 1,
             'audio_format': 'paInt16',
             'enable_audio': True,
@@ -117,8 +118,8 @@ def create_debug_config():
         
         # LLM configuration
         llm = type('obj', (object,), {
-            'model_repo': 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
-            'model_filename': 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
+            'model_repo': 'MaziyarPanahi/gemma-3-1b-it-GGUF',
+            'model_filename': 'gemma-3-1b-it.Q4_K_M.gguf',
             'max_tokens': 150,
             'temperature': 0.7,
             'context_window': 512
@@ -126,8 +127,8 @@ def create_debug_config():
         
         # Summarization configuration
         summarization = type('obj', (object,), {
-            'model_repo': 'bartowski/Meta-Llama-3.1-8B-Instruct-GGUF',
-            'model_filename': 'Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf',
+            'model_repo': 'MaziyarPanahi/gemma-3-1b-it-GGUF',
+            'model_filename': 'gemma-3-1b-it.Q4_K_M.gguf',
             'max_tokens': 80,
             'temperature': 0.0
         })()
@@ -528,6 +529,47 @@ def status(ctx, debug: bool):
 
 
 @cli.command()
+@click.option('--debug', is_flag=True, help='Enable debug mode')
+@click.pass_context
+def benchmark(ctx, debug: bool):
+    """🚀 Run comprehensive system benchmark."""
+    try:
+        print_banner()
+        console.print("🚀 MYTHIC-LITE BENCHMARK MODE", style="bold blue")
+        console.print("=" * 80, style="bold blue")
+        
+        if debug:
+            show_debug_message()
+        
+        # Create orchestrator for benchmark
+        debug_config = create_debug_config() if debug else None
+        orchestrator = create_orchestrator(debug_config)
+        
+        # Run the comprehensive benchmark
+        orchestrator._run_benchmark_mode()
+        
+        console.print("\n✅ Benchmark completed successfully!", style="bold green")
+        
+        # Ask if user wants to start chat
+        console.print("\n💬 Would you like to start a chat now? (y/n)", style="cyan")
+        try:
+            choice = input("Enter choice: ").lower().strip()
+            if choice in ['y', 'yes']:
+                console.print("🚀 Starting chat...", style="green")
+                if initialize_system(orchestrator):
+                    orchestrator.run_chatbot()
+        except KeyboardInterrupt:
+            console.print("\n👋 Returning to main menu...", style="yellow")
+        finally:
+            if 'orchestrator' in locals():
+                orchestrator.cleanup()
+        
+    except Exception as e:
+        console.print(f"❌ Benchmark failed: {e}", style="red")
+        sys.exit(1)
+
+
+@cli.command()
 @click.pass_context
 def help(ctx):
     """❓ Show detailed help information."""
@@ -538,11 +580,13 @@ def help(ctx):
     console.print("• Text Chat: Use mythic chat for keyboard conversations")
     console.print("• Voice Chat: Use mythic voice for voice conversations")
     console.print("• System Status: Use mythic status to check system health")
+    console.print("• System Benchmark: Use mythic benchmark for comprehensive analysis")
     console.print("• Initialization: Use mythic init to set up the system")
     
     console.print("\n💡 Tips:", style="yellow")
     console.print("• Start with mythic init if this is your first time")
     console.print("• Use mythic status to verify all systems are working")
+    console.print("• Use mythic benchmark for detailed performance analysis")
     console.print("• For voice conversations, ensure your microphone is working")
     console.print("• Just run mythic without arguments to run setup then start voice mode!")
     console.print("• The default behavior is: Setup → Voice Mode (hands-free operation)")
